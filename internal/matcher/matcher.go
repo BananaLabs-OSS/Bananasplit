@@ -7,10 +7,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/bananalabs-oss/bananasplit/internal/peel"
 	"github.com/bananalabs-oss/bananasplit/internal/players"
 	"github.com/bananalabs-oss/bananasplit/internal/queue"
 	"github.com/bananalabs-oss/bananasplit/internal/referrals"
+	"github.com/bananalabs-oss/potassium/peel"
 	"github.com/bananalabs-oss/potassium/registry"
 )
 

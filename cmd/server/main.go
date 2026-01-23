@@ -7,10 +7,10 @@ import (
 	"time"
 
 	"github.com/bananalabs-oss/bananasplit/internal/matcher"
-	"github.com/bananalabs-oss/bananasplit/internal/peel"
 	"github.com/bananalabs-oss/bananasplit/internal/players"
 	"github.com/bananalabs-oss/bananasplit/internal/queue"
 	"github.com/bananalabs-oss/bananasplit/internal/referrals"
+	"github.com/bananalabs-oss/potassium/peel"
 	"github.com/gin-gonic/gin"
 )
 
@@ -136,7 +136,7 @@ func main() {
 			ServerID string `json:"serverId"`
 			MatchID  string `json:"matchId"`
 			Players  []struct {
-				UID    string `json:"uid"`
+				UUID   string `json:"uid"`
 				Action string `json:"action"` // "requeue" or "lobby"
 			} `json:"players"`
 		}
@@ -151,14 +151,24 @@ func main() {
 
 		for _, player := range req.Players {
 			if player.Action == "requeue" {
-				// Put back in queue - need to know what mode
-				// For now, skip requeue (would need mode in request)
-				fmt.Printf("[Bananasplit] Player %s wants requeue (not implemented)\n", player.UID)
+				fmt.Printf("[Bananasplit] Player %s wants requeue (not implemented)\n", player.UUID)
 			} else {
-				// Send to lobby
 				if hasLobby {
-					fmt.Printf("[Bananasplit] Player %s returning to lobby %s\n", player.UID, lobby.ID)
-					// Would send transfer to game server here
+					fmt.Printf("[Bananasplit] Player %s returning to lobby %s\n", player.UUID, lobby.ID)
+
+					playerInfo, found := playerRegistry.GetByUUID(player.UUID)
+					if found {
+						backend := fmt.Sprintf("%s:%d", lobby.Host, lobby.Port)
+						if err := peelClient.SetRoute(playerInfo.IP, backend); err != nil {
+							fmt.Printf("[Bananasplit] Failed to set route for %s: %v\n", player.UUID, err)
+						}
+
+						referralQueue.Add(req.ServerID, referrals.Referral{
+							PlayerUUID: player.UUID,
+							Host:       relayHost,
+							Port:       relayPort,
+						})
+					}
 				}
 			}
 		}
