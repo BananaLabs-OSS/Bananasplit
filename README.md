@@ -102,8 +102,19 @@ Game servers poll this endpoint to know which players to send to relay.
 Background process runs every 500ms:
 1. For each queue, find servers with ready matches
 2. Assign players to matches
-3. Update Peel routes (player IP → game server)
-4. Queue referrals for lobby servers
+3. Notify lobby servers via POST /match webhook
+
+### Webhook: /match (to lobby)
+
+Matcher sends to each lobby's webhook port:
+```json
+{
+  "matchId": "arena-1",
+  "mode": "skywars", 
+  "players": ["uuid-1", "uuid-2"],
+  "gameServer": "10.99.0.10:5520"
+}
+```
 
 ## Dependencies
 
