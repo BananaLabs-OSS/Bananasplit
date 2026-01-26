@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"strconv"
 	"time"
@@ -11,8 +14,18 @@ import (
 	"github.com/bananalabs-oss/bananasplit/internal/queue"
 	"github.com/bananalabs-oss/bananasplit/internal/referrals"
 	"github.com/bananalabs-oss/potassium/peel"
+	"github.com/bananalabs-oss/potassium/registry"
 	"github.com/gin-gonic/gin"
 )
+
+type RouteRequest struct {
+	PlayerIP string `json:"player_ip"`
+}
+
+type RouteResponse struct {
+	Backend  string `json:"backend"`
+	ServerID string `json:"server_id"`
+}
 
 func getEnv(key, fallback string) string {
 	if value := os.Getenv(key); value != "" {
@@ -82,10 +95,64 @@ func main() {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
 
+	r.POST("/route-request", func(c *gin.Context) {
+		var req struct {
+			PlayerIP string `json:"player_ip"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+
+		// Find lobby with capacity
+		resp, err := http.Get(bananagineURL + "/registry/servers/?type=lobby")
+		if err != nil {
+			c.JSON(500, gin.H{"error": "failed to query registry"})
+			return
+		}
+		defer resp.Body.Close()
+
+		var servers []registry.ServerInfo
+		json.NewDecoder(resp.Body).Decode(&servers)
+
+		var target *registry.ServerInfo
+
+		for i := range servers {
+			if servers[i].MaxPlayers == 0 || servers[i].Players < servers[i].MaxPlayers {
+				target = &servers[i]
+				break
+			}
+		}
+
+		if target == nil {
+			c.JSON(503, gin.H{"error": "no lobbies available"})
+			return
+		}
+
+		backend := fmt.Sprintf("%s:%d", target.Host, target.Port)
+
+		// Register player with existing registry
+		playerRegistry.Register(req.PlayerIP, req.PlayerIP, target.ID)
+
+		// Set Peel route
+		if peelURL != "" {
+			routeBody, _ := json.Marshal(map[string]string{
+				"player_ip": req.PlayerIP,
+				"backend":   backend,
+			})
+			http.Post(peelURL+"/routes", "application/json", bytes.NewReader(routeBody))
+		}
+
+		c.JSON(200, gin.H{
+			"backend":   backend,
+			"server_id": target.ID,
+		})
+	})
+
 	// Join queue
 	r.POST("/queue/join", func(c *gin.Context) {
 		var req struct {
-			UID         string `json:"uid"`
+			UUID        string `json:"uuid"`
 			Mode        string `json:"mode"`
 			LobbyServer string `json:"lobbyServer"`
 		}
@@ -96,7 +163,7 @@ func main() {
 		}
 
 		queues.Join(req.Mode, queue.QueueEntry{
-			UUID:        req.UID,
+			UUID:        req.UUID,
 			LobbyServer: req.LobbyServer,
 		})
 
@@ -110,7 +177,7 @@ func main() {
 	// Leave queue
 	r.POST("/queue/leave", func(c *gin.Context) {
 		var req struct {
-			UID  string `json:"uid"`
+			UUID string `json:"uuid"`
 			Mode string `json:"mode"`
 		}
 
@@ -119,7 +186,7 @@ func main() {
 			return
 		}
 
-		removed := queues.Leave(req.Mode, req.UID)
+		removed := queues.Leave(req.Mode, req.UUID)
 		c.JSON(200, gin.H{"removed": removed})
 	})
 
@@ -136,7 +203,7 @@ func main() {
 			ServerID string `json:"serverId"`
 			MatchID  string `json:"matchId"`
 			Players  []struct {
-				UUID   string `json:"uid"`
+				UUID   string `json:"uuid"`
 				Action string `json:"action"` // "requeue" or "lobby"
 			} `json:"players"`
 		}

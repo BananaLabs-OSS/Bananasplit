@@ -47,6 +47,14 @@ type ExpectRequest struct {
 	UUIDs   []string `json:"uuids"`
 }
 
+// MatchReadyRequest is sent to lobby servers to trigger transfers
+type MatchReadyRequest struct {
+	MatchID    string   `json:"matchId"`
+	Mode       string   `json:"mode"`
+	Players    []string `json:"players"`
+	GameServer string   `json:"gameServer"` // host:port of game server
+}
+
 // New creates a new matcher
 func New(
 	config Config,
@@ -117,14 +125,69 @@ func (m *Matcher) tryMatch(mode string) {
 	// Tell game server to expect players
 	m.sendExpect(server, matchID, uuids)
 
-	// Queue referrals for plugin polling
-	backend := fmt.Sprintf("%s:%d", server.Host, server.Port)
-	for _, p := range players {
-		m.queueReferral(p.UUID, backend)
-	}
-
 	// Update match status to busy
 	m.updateMatchStatus(server.ID, matchID, registry.StatusBusy, uuids)
+
+	// Notify lobbies to transfer players
+	m.notifyLobbies(players, server, matchID, mode)
+}
+
+// notifyLobbies tells lobby servers to transfer matched players
+func (m *Matcher) notifyLobbies(players []queue.QueueEntry, server registry.ServerInfo, matchID string, mode string) { // Group players by their lobby server
+	lobbies := make(map[string][]string)
+	for _, p := range players {
+		lobbies[p.LobbyServer] = append(lobbies[p.LobbyServer], p.UUID)
+	}
+
+	backend := fmt.Sprintf("%s:%d", server.Host, server.Port)
+
+	for lobbyID, uuids := range lobbies {
+		// Get lobby info from registry
+		lobbyURL := fmt.Sprintf("%s/registry/servers/%s", m.config.RegistryURL, lobbyID)
+		resp, err := m.client.Get(lobbyURL)
+		if err != nil {
+			fmt.Printf("[Matcher] Failed to get lobby %s: %v\n", lobbyID, err)
+			continue
+		}
+
+		var lobby registry.ServerInfo
+		if err := json.NewDecoder(resp.Body).Decode(&lobby); err != nil {
+			resp.Body.Close()
+			fmt.Printf("[Matcher] Failed to decode lobby %s: %v\n", lobbyID, err)
+			continue
+		}
+		resp.Body.Close()
+
+		// POST to lobby's /match webhook
+		webhookURL := fmt.Sprintf("http://%s:%d/match", lobby.Host, lobby.WebhookPort)
+		payload := MatchReadyRequest{
+			MatchID:    matchID,
+			Mode:       mode,
+			Players:    uuids,
+			GameServer: backend,
+		}
+
+		body, _ := json.Marshal(payload)
+		resp, err = m.client.Post(webhookURL, "application/json", bytes.NewReader(body))
+		if err != nil {
+			fmt.Printf("[Matcher] Failed to notify lobby %s: %v\n", lobbyID, err)
+			continue
+		}
+		resp.Body.Close()
+
+		fmt.Printf("[Matcher] Notified lobby %s to transfer %d players to %s\n", lobbyID, len(uuids), backend)
+	}
+}
+
+// updatePeelRoute updates the Peel route for a player
+func (m *Matcher) updatePeelRoute(playerUUID string, backend string) {
+	player, found := m.players.GetByUUID(playerUUID)
+	if !found {
+		return
+	}
+	if m.peel != nil {
+		m.peel.SetRoute(player.IP, backend)
+	}
 }
 
 // findReadyMatch queries registry for a ready match
@@ -185,7 +248,7 @@ func (m *Matcher) queueReferral(playerUUID string, backend string) {
 
 // sendExpect tells game server to expect players
 func (m *Matcher) sendExpect(server registry.ServerInfo, matchID string, uuids []string) {
-	url := fmt.Sprintf("http://%s:%d/expect", server.Host, server.Port)
+	url := fmt.Sprintf("http://%s:%d/expect", server.Host, server.WebhookPort)
 
 	req := ExpectRequest{
 		MatchID: matchID,
