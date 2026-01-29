@@ -15,13 +15,39 @@ Bananasplit handles:
 
 ## Quick Start
 ```bash
-# Optional: Set Peel URL for route updates
-export PEEL_URL=http://localhost:8080
-
 go run ./cmd/server
 ```
 
-Runs on `:3001`.
+## Configuration
+
+Configuration priority: CLI flags > Environment variables > Defaults
+
+| Setting | Env Var | CLI Flag | Default                 |
+|---------|---------|----------|-------------------------|
+| Listen address | `LISTEN_ADDR` | `-listen` | `:3000`                 |
+| Bananagine URL | `BANANAGINE_URL` | `-bananagine` | `http://localhost:3000` |
+| Peel URL | `PEEL_URL` | `-peel` | (disabled)              |
+| Relay host | `RELAY_HOST` | `-relay-host` | `hycraft.net`           |
+| Relay port | `RELAY_PORT` | `-relay-port` | `5520`                  |
+| Tick rate (ms) | `TICK_RATE` | `-tick` | `500`                   |
+| Queue timeout (sec) | `QUEUE_TIMEOUT` | `-queue-timeout` | `300`                   |
+
+**CLI:**
+```bash
+./bananasplit -listen :3000 -bananagine http://localhost:3000 -tick 500 -queue-timeout 300
+```
+
+**Docker Compose:**
+```yaml
+bananasplit:
+  image: localhost/bananasplit:local
+  ports:
+    - "3000:3000"
+  environment:
+    - BANANAGINE_URL=http://bananagine:3000
+    - PEEL_URL=http://peel:8080
+    - QUEUE_TIMEOUT=300
+```
 
 ## API Reference
 
@@ -36,7 +62,7 @@ Runs on `:3001`.
 **Join Queue:**
 ```json
 {
-  "uid": "player-uuid",
+  "uuid": "player-uuid",
   "mode": "skywars",
   "lobbyServer": "lobby-1"
 }
@@ -54,8 +80,8 @@ Runs on `:3001`.
   "serverId": "skywars-1",
   "matchId": "match-1",
   "players": [
-    {"uid": "player-AAA", "action": "lobby"},
-    {"uid": "player-BBB", "action": "lobby"}
+    {"uuid": "player-AAA", "action": "lobby"},
+    {"uuid": "player-BBB", "action": "lobby"}
   ]
 }
 ```
