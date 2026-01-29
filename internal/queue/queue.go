@@ -1,6 +1,7 @@
 package queue
 
 import (
+	"fmt"
 	"sync"
 	"time"
 )
@@ -19,15 +20,51 @@ type Queue struct {
 
 // Manager manages all queues by game mode
 type Manager struct {
-	mu     sync.RWMutex
-	queues map[string]*Queue // key = mode (e.g., "skywars")
+	mu      sync.RWMutex
+	queues  map[string]*Queue // key = mode (e.g., "skywars")
+	timeout time.Duration
 }
 
 // NewManager creates a new queue manager
-func NewManager() (*Manager, error) {
-	return &Manager{
-		queues: make(map[string]*Queue),
-	}, nil
+func NewManager(timeout time.Duration) (*Manager, error) {
+	m := &Manager{
+		queues:  make(map[string]*Queue),
+		timeout: timeout,
+	}
+
+	// Start cleanup goroutine if timeout enabled
+	if timeout > 0 {
+		go m.cleanupLoop()
+	}
+
+	return m, nil
+}
+
+// cleanupLoop removes expired entries
+func (m *Manager) cleanupLoop() {
+	ticker := time.NewTicker(30 * time.Second)
+	for range ticker.C {
+		m.cleanup()
+	}
+}
+
+// cleanup removes entries older than timeout
+func (m *Manager) cleanup() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	now := time.Now()
+	for mode, q := range m.queues {
+		var kept []QueueEntry
+		for _, entry := range q.entries {
+			if now.Sub(entry.JoinedAt) < m.timeout {
+				kept = append(kept, entry)
+			} else {
+				fmt.Printf("[Queue] Timeout: %s removed from %s (waited %s)\n", entry.UUID, mode, now.Sub(entry.JoinedAt))
+			}
+		}
+		q.entries = kept
+	}
 }
 
 // Join adds a player to a queue

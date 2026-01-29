@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"net/http"
 	"os"
@@ -27,32 +28,54 @@ type RouteResponse struct {
 	ServerID string `json:"server_id"`
 }
 
-func getEnv(key, fallback string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return fallback
-}
-
-func getEnvInt(key string, fallback int) int {
-	if value := os.Getenv(key); value != "" {
-		if i, err := strconv.Atoi(value); err == nil {
-			return i
-		}
-	}
-	return fallback
-}
-
 func main() {
-	// Config from environment
-	peelURL := getEnv("PEEL_URL", "")
-	bananagineURL := getEnv("BANANAGINE_URL", "http://localhost:3000")
-	relayHost := getEnv("RELAY_HOST", "hycraft.net")
-	relayPort := getEnvInt("RELAY_PORT", 5520)
-	listenAddr := getEnv("LISTEN_ADDR", ":3001")
+	// CLI flags
+	peelURL := flag.String("peel", "", "Peel URL (optional)")
+	bananagineURL := flag.String("bananagine", "", "Bananagine URL (default http://localhost:3000)")
+	relayHost := flag.String("relay-host", "", "Relay host for referrals (default hycraft.net)")
+	relayPort := flag.Int("relay-port", 0, "Relay port for referrals (default 5520)")
+	listenAddr := flag.String("listen", "", "Listen address (default :3000)")
+	tickRate := flag.Int("tick", 0, "Matcher tick rate in ms (default 500)")
+	queueTimeout := flag.Int("queue-timeout", 0, "Queue timeout in seconds, 0 = disabled (default 300)")
+	flag.Parse()
+
+	// Resolve: CLI > Env > Default
+	config := struct {
+		PeelURL       string
+		BananagineURL string
+		RelayHost     string
+		RelayPort     int
+		ListenAddr    string
+		TickRate      time.Duration
+		QueueTimeout  time.Duration
+	}{
+		PeelURL:       resolve(*peelURL, getEnv("PEEL_URL", ""), ""),
+		BananagineURL: resolve(*bananagineURL, getEnv("BANANAGINE_URL", ""), "http://localhost:3000"),
+		RelayHost:     resolve(*relayHost, getEnv("RELAY_HOST", ""), "hycraft.net"),
+		RelayPort:     resolveInt(*relayPort, getEnvInt("RELAY_PORT", 0), 5520),
+		ListenAddr:    resolve(*listenAddr, getEnv("LISTEN_ADDR", ""), ":3000"),
+		TickRate:      time.Duration(resolveInt(*tickRate, getEnvInt("TICK_RATE", 0), 500)) * time.Millisecond,
+		QueueTimeout:  time.Duration(resolveInt(*queueTimeout, getEnvInt("QUEUE_TIMEOUT", 0), 300)) * time.Second,
+	}
+
+	// Log config
+	fmt.Printf("Listen: %s\n", config.ListenAddr)
+	fmt.Printf("Bananagine: %s\n", config.BananagineURL)
+	fmt.Printf("Relay: %s:%d\n", config.RelayHost, config.RelayPort)
+	fmt.Printf("Tick rate: %s\n", config.TickRate)
+	if config.QueueTimeout > 0 {
+		fmt.Printf("Queue timeout: %s\n", config.QueueTimeout)
+	} else {
+		fmt.Println("Queue timeout: disabled")
+	}
+	if config.PeelURL != "" {
+		fmt.Printf("Peel: %s\n", config.PeelURL)
+	} else {
+		fmt.Println("Peel: disabled")
+	}
 
 	// Create queue manager
-	queues, err := queue.NewManager()
+	queues, err := queue.NewManager(config.QueueTimeout)
 	if err != nil {
 		return
 	}
@@ -63,20 +86,17 @@ func main() {
 
 	// Create peel client (optional)
 	var peelClient *peel.Client
-	if peelURL != "" {
-		peelClient = peel.NewClient(peelURL)
-		fmt.Printf("Peel enabled: %s\n", peelURL)
-	} else {
-		fmt.Println("Peel disabled (no PEEL_URL)")
+	if config.PeelURL != "" {
+		peelClient = peel.NewClient(config.PeelURL)
 	}
 
 	// Create matcher
 	m := matcher.New(
 		matcher.Config{
-			RegistryURL: bananagineURL,
-			TickRate:    500 * time.Millisecond,
-			RelayHost:   relayHost,
-			RelayPort:   relayPort,
+			RegistryURL: config.BananagineURL,
+			TickRate:    config.TickRate,
+			RelayHost:   config.RelayHost,
+			RelayPort:   config.RelayPort,
 		},
 		queues,
 		playerRegistry,
@@ -105,7 +125,7 @@ func main() {
 		}
 
 		// Find lobby with capacity
-		resp, err := http.Get(bananagineURL + "/registry/servers/?type=lobby")
+		resp, err := http.Get(config.BananagineURL + "/registry/servers?type=lobby")
 		if err != nil {
 			c.JSON(500, gin.H{"error": "failed to query registry"})
 			return
@@ -135,12 +155,12 @@ func main() {
 		playerRegistry.Register(req.PlayerIP, req.PlayerIP, target.ID)
 
 		// Set Peel route
-		if peelURL != "" {
+		if config.PeelURL != "" {
 			routeBody, _ := json.Marshal(map[string]string{
 				"player_ip": req.PlayerIP,
 				"backend":   backend,
 			})
-			http.Post(peelURL+"/routes", "application/json", bytes.NewReader(routeBody))
+			http.Post(config.PeelURL+"/routes", "application/json", bytes.NewReader(routeBody))
 		}
 
 		c.JSON(200, gin.H{
@@ -232,8 +252,8 @@ func main() {
 
 						referralQueue.Add(req.ServerID, referrals.Referral{
 							PlayerUUID: player.UUID,
-							Host:       relayHost,
-							Port:       relayPort,
+							Host:       config.RelayHost,
+							Port:       config.RelayPort,
 						})
 					}
 				}
@@ -305,6 +325,43 @@ func main() {
 		c.JSON(200, refs)
 	})
 
-	fmt.Printf("Bananasplit running on %s\n", listenAddr)
-	r.Run(listenAddr)
+	fmt.Printf("Bananasplit running on %s\n", config.ListenAddr)
+	r.Run(config.ListenAddr)
+}
+
+// resolve returns first non-empty value: cli > env > fallback
+func resolve(cli, env, fallback string) string {
+	if cli != "" {
+		return cli
+	}
+	if env != "" {
+		return env
+	}
+	return fallback
+}
+
+func resolveInt(cli, env, fallback int) int {
+	if cli != 0 {
+		return cli
+	}
+	if env != 0 {
+		return env
+	}
+	return fallback
+}
+
+func getEnv(key, fallback string) string {
+	if val := os.Getenv(key); val != "" {
+		return val
+	}
+	return fallback
+}
+
+func getEnvInt(key string, fallback int) int {
+	if val := os.Getenv(key); val != "" {
+		if i, err := strconv.Atoi(val); err == nil {
+			return i
+		}
+	}
+	return fallback
 }
