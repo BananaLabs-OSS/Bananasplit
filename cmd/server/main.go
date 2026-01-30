@@ -14,8 +14,8 @@ import (
 	"github.com/bananalabs-oss/bananasplit/internal/players"
 	"github.com/bananalabs-oss/bananasplit/internal/queue"
 	"github.com/bananalabs-oss/bananasplit/internal/referrals"
-	"github.com/bananalabs-oss/potassium/peel"
 	"github.com/bananalabs-oss/potassium/registry"
+	"github.com/bananalabs-oss/potassium/relay"
 	"github.com/gin-gonic/gin"
 )
 
@@ -85,9 +85,9 @@ func main() {
 	referralQueue := referrals.NewQueue()
 
 	// Create peel client (optional)
-	var peelClient *peel.Client
+	var peelClient *relay.Client
 	if config.PeelURL != "" {
-		peelClient = peel.NewClient(config.PeelURL)
+		peelClient = relay.NewClient(config.PeelURL)
 	}
 
 	// Create matcher

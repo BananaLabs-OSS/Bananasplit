@@ -10,8 +10,8 @@ import (
 	"github.com/bananalabs-oss/bananasplit/internal/players"
 	"github.com/bananalabs-oss/bananasplit/internal/queue"
 	"github.com/bananalabs-oss/bananasplit/internal/referrals"
-	"github.com/bananalabs-oss/potassium/peel"
 	"github.com/bananalabs-oss/potassium/registry"
+	"github.com/bananalabs-oss/potassium/relay"
 )
 
 // Config holds matcher configuration
@@ -31,7 +31,7 @@ type Matcher struct {
 
 	players   *players.Registry
 	referrals *referrals.Queue
-	peel      *peel.Client
+	peel      *relay.Client
 }
 
 // TransferRequest is sent to lobby servers
@@ -61,7 +61,7 @@ func New(
 	queues *queue.Manager,
 	playerRegistry *players.Registry,
 	referralQueue *referrals.Queue,
-	peelClient *peel.Client) *Matcher {
+	peelClient *relay.Client) *Matcher {
 	return &Matcher{
 		config:    config,
 		queues:    queues,
