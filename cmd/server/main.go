@@ -53,7 +53,7 @@ func main() {
 		BananagineURL: resolve(*bananagineURL, getEnv("BANANAGINE_URL", ""), "http://localhost:3000"),
 		RelayHost:     resolve(*relayHost, getEnv("RELAY_HOST", ""), "hycraft.net"),
 		RelayPort:     resolveInt(*relayPort, getEnvInt("RELAY_PORT", 0), 5520),
-		ListenAddr:    resolve(*listenAddr, getEnv("LISTEN_ADDR", ""), ":3000"),
+		ListenAddr:    resolve(*listenAddr, getEnv("LISTEN_ADDR", ""), ":3001"),
 		TickRate:      time.Duration(resolveInt(*tickRate, getEnvInt("TICK_RATE", 0), 500)) * time.Millisecond,
 		QueueTimeout:  time.Duration(resolveInt(*queueTimeout, getEnvInt("QUEUE_TIMEOUT", 0), 300)) * time.Second,
 	}
@@ -246,10 +246,11 @@ func main() {
 					playerInfo, found := playerRegistry.GetByUUID(player.UUID)
 					if found {
 						backend := fmt.Sprintf("%s:%d", lobby.Host, lobby.Port)
-						if err := peelClient.SetRoute(playerInfo.IP, backend); err != nil {
-							fmt.Printf("[Bananasplit] Failed to set route for %s: %v\n", player.UUID, err)
+						if peelClient != nil {
+							if err := peelClient.SetRoute(playerInfo.IP, backend); err != nil {
+								fmt.Printf("[Bananasplit] Failed to set route for %s: %v\n", player.UUID, err)
+							}
 						}
-
 						referralQueue.Add(req.ServerID, referrals.Referral{
 							PlayerUUID: player.UUID,
 							Host:       config.RelayHost,
