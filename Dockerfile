@@ -11,5 +11,5 @@ FROM alpine:3.19
 RUN apk add --no-cache ca-certificates
 WORKDIR /app
 COPY --from=builder /build/bananasplit .
-EXPOSE 3000
+EXPOSE 3001
 CMD ["./bananasplit"]

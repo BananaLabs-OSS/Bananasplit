@@ -7,6 +7,7 @@ From [BananaLabs OSS](https://github.com/bananalabs-oss).
 ## Overview
 
 Bananasplit handles:
+
 - **Queue**: Players join mode-specific queues
 - **Matcher**: Finds available matches and assigns players
 - **Player Registry**: Tracks player locations (UUID → IP → server)
@@ -14,6 +15,7 @@ Bananasplit handles:
 - **Peel Integration**: Updates routing when players move
 
 ## Quick Start
+
 ```bash
 go run ./cmd/server
 ```
@@ -22,27 +24,29 @@ go run ./cmd/server
 
 Configuration priority: CLI flags > Environment variables > Defaults
 
-| Setting | Env Var | CLI Flag | Default                 |
-|---------|---------|----------|-------------------------|
-| Listen address | `LISTEN_ADDR` | `-listen` | `:3000`                 |
-| Bananagine URL | `BANANAGINE_URL` | `-bananagine` | `http://localhost:3000` |
-| Peel URL | `PEEL_URL` | `-peel` | (disabled)              |
-| Relay host | `RELAY_HOST` | `-relay-host` | `hycraft.net`           |
-| Relay port | `RELAY_PORT` | `-relay-port` | `5520`                  |
-| Tick rate (ms) | `TICK_RATE` | `-tick` | `500`                   |
-| Queue timeout (sec) | `QUEUE_TIMEOUT` | `-queue-timeout` | `300`                   |
+| Setting             | Env Var          | CLI Flag         | Default                 |
+| ------------------- | ---------------- | ---------------- | ----------------------- |
+| Listen address      | `LISTEN_ADDR`    | `-listen`        | `:3001`                 |
+| Bananagine URL      | `BANANAGINE_URL` | `-bananagine`    | `http://localhost:3000` |
+| Peel URL            | `PEEL_URL`       | `-peel`          | (disabled)              |
+| Relay host          | `RELAY_HOST`     | `-relay-host`    | `hycraft.net`           |
+| Relay port          | `RELAY_PORT`     | `-relay-port`    | `5520`                  |
+| Tick rate (ms)      | `TICK_RATE`      | `-tick`          | `500`                   |
+| Queue timeout (sec) | `QUEUE_TIMEOUT`  | `-queue-timeout` | `300`                   |
 
 **CLI:**
+
 ```bash
-./bananasplit -listen :3000 -bananagine http://localhost:3000 -tick 500 -queue-timeout 300
+./bananasplit -listen :3001 -bananagine http://localhost:3000 -tick 500 -queue-timeout 300
 ```
 
 **Docker Compose:**
+
 ```yaml
 bananasplit:
   image: localhost/bananasplit:local
   ports:
-    - "3000:3000"
+    - "3001:3001"
   environment:
     - BANANAGINE_URL=http://bananagine:3000
     - PEEL_URL=http://peel:8080
@@ -53,13 +57,14 @@ bananasplit:
 
 ### Queue
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/queue/join` | Join matchmaking queue |
-| `POST` | `/queue/leave` | Leave queue |
-| `GET` | `/queue/:mode/size` | Get queue size for mode |
+| Method | Endpoint            | Description             |
+| ------ | ------------------- | ----------------------- |
+| `POST` | `/queue/join`       | Join matchmaking queue  |
+| `POST` | `/queue/leave`      | Leave queue             |
+| `GET`  | `/queue/:mode/size` | Get queue size for mode |
 
 **Join Queue:**
+
 ```json
 {
   "uuid": "player-uuid",
@@ -70,18 +75,19 @@ bananasplit:
 
 ### Match Complete
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
+| Method | Endpoint          | Description           |
+| ------ | ----------------- | --------------------- |
 | `POST` | `/match-complete` | Report match finished |
 
 **Match Complete:**
+
 ```json
 {
   "serverId": "skywars-1",
   "matchId": "match-1",
   "players": [
-    {"uuid": "player-AAA", "action": "lobby"},
-    {"uuid": "player-BBB", "action": "lobby"}
+    { "uuid": "player-AAA", "action": "lobby" },
+    { "uuid": "player-BBB", "action": "lobby" }
   ]
 }
 ```
@@ -90,12 +96,13 @@ Actions: `lobby` (return to lobby), `requeue` (queue again)
 
 ### Players
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/players/register` | Register player location |
-| `DELETE` | `/players/:uuid` | Unregister player |
+| Method   | Endpoint            | Description              |
+| -------- | ------------------- | ------------------------ |
+| `POST`   | `/players/register` | Register player location |
+| `DELETE` | `/players/:uuid`    | Unregister player        |
 
 **Register Player:**
+
 ```json
 {
   "player_uuid": "player-AAA",
@@ -106,11 +113,12 @@ Actions: `lobby` (return to lobby), `requeue` (queue again)
 
 ### Referrals
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/referrals?server=:id` | Get pending transfers for server |
+| Method | Endpoint                | Description                      |
+| ------ | ----------------------- | -------------------------------- |
+| `GET`  | `/referrals?server=:id` | Get pending transfers for server |
 
 **Response:**
+
 ```json
 [
   {
@@ -126,6 +134,7 @@ Game servers poll this endpoint to know which players to send to relay.
 ## Matcher
 
 Background process runs every 500ms:
+
 1. For each queue, find servers with ready matches
 2. Assign players to matches
 3. Notify lobby servers via POST /match webhook
@@ -133,10 +142,11 @@ Background process runs every 500ms:
 ### Webhook: /match (to lobby)
 
 Matcher sends to each lobby's webhook port:
+
 ```json
 {
   "matchId": "arena-1",
-  "mode": "skywars", 
+  "mode": "skywars",
   "players": ["uuid-1", "uuid-2"],
   "gameServer": "10.99.0.10:5520"
 }
@@ -150,3 +160,4 @@ Matcher sends to each lobby's webhook port:
 ## License
 
 MIT
+
