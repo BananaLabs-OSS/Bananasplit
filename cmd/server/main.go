@@ -6,14 +6,13 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
-	"os"
-	"strconv"
 	"time"
 
 	"github.com/bananalabs-oss/bananasplit/internal/matcher"
 	"github.com/bananalabs-oss/bananasplit/internal/players"
 	"github.com/bananalabs-oss/bananasplit/internal/queue"
 	"github.com/bananalabs-oss/bananasplit/internal/referrals"
+	"github.com/bananalabs-oss/potassium/config"
 	"github.com/bananalabs-oss/potassium/registry"
 	"github.com/bananalabs-oss/potassium/relay"
 	"github.com/gin-gonic/gin"
@@ -49,13 +48,13 @@ func main() {
 		TickRate      time.Duration
 		QueueTimeout  time.Duration
 	}{
-		PeelURL:       resolve(*peelURL, getEnv("PEEL_URL", ""), ""),
-		BananagineURL: resolve(*bananagineURL, getEnv("BANANAGINE_URL", ""), "http://localhost:3000"),
-		RelayHost:     resolve(*relayHost, getEnv("RELAY_HOST", ""), "hycraft.net"),
-		RelayPort:     resolveInt(*relayPort, getEnvInt("RELAY_PORT", 0), 5520),
-		ListenAddr:    resolve(*listenAddr, getEnv("LISTEN_ADDR", ""), ":3001"),
-		TickRate:      time.Duration(resolveInt(*tickRate, getEnvInt("TICK_RATE", 0), 500)) * time.Millisecond,
-		QueueTimeout:  time.Duration(resolveInt(*queueTimeout, getEnvInt("QUEUE_TIMEOUT", 0), 300)) * time.Second,
+		PeelURL:       config.Resolve(*peelURL, config.EnvOrDefault("PEEL_URL", ""), ""),
+		BananagineURL: config.Resolve(*bananagineURL, config.EnvOrDefault("BANANAGINE_URL", ""), "http://localhost:3000"),
+		RelayHost:     config.Resolve(*relayHost, config.EnvOrDefault("RELAY_HOST", ""), "hycraft.net"),
+		RelayPort:     config.ResolveInt(*relayPort, config.EnvOrDefaultInt("RELAY_PORT", 0), 5520),
+		ListenAddr:    config.Resolve(*listenAddr, config.EnvOrDefault("LISTEN_ADDR", ""), ":3001"),
+		TickRate:      time.Duration(config.ResolveInt(*tickRate, config.EnvOrDefaultInt("TICK_RATE", 0), 500)) * time.Millisecond,
+		QueueTimeout:  time.Duration(config.ResolveInt(*queueTimeout, config.EnvOrDefaultInt("QUEUE_TIMEOUT", 0), 300)) * time.Second,
 	}
 
 	// Log config
@@ -330,39 +329,3 @@ func main() {
 	r.Run(config.ListenAddr)
 }
 
-// resolve returns first non-empty value: cli > env > fallback
-func resolve(cli, env, fallback string) string {
-	if cli != "" {
-		return cli
-	}
-	if env != "" {
-		return env
-	}
-	return fallback
-}
-
-func resolveInt(cli, env, fallback int) int {
-	if cli != 0 {
-		return cli
-	}
-	if env != 0 {
-		return env
-	}
-	return fallback
-}
-
-func getEnv(key, fallback string) string {
-	if val := os.Getenv(key); val != "" {
-		return val
-	}
-	return fallback
-}
-
-func getEnvInt(key string, fallback int) int {
-	if val := os.Getenv(key); val != "" {
-		if i, err := strconv.Atoi(val); err == nil {
-			return i
-		}
-	}
-	return fallback
-}
