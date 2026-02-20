@@ -14,6 +14,7 @@ import (
 	"github.com/bananalabs-oss/bananasplit/internal/referrals"
 	"github.com/bananalabs-oss/potassium/config"
 	"github.com/bananalabs-oss/potassium/registry"
+	"github.com/bananalabs-oss/potassium/server"
 	"github.com/bananalabs-oss/potassium/relay"
 	"github.com/gin-gonic/gin"
 )
@@ -325,7 +326,6 @@ func main() {
 		c.JSON(200, refs)
 	})
 
-	fmt.Printf("Bananasplit running on %s\n", config.ListenAddr)
-	r.Run(config.ListenAddr)
+	server.ListenAndShutdown(config.ListenAddr, r, "Bananasplit")
 }
 
