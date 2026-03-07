@@ -133,7 +133,10 @@ func main() {
 		defer resp.Body.Close()
 
 		var servers []registry.ServerInfo
-		json.NewDecoder(resp.Body).Decode(&servers)
+		if err := json.NewDecoder(resp.Body).Decode(&servers); err != nil {
+			c.JSON(500, gin.H{"error": "failed to decode registry response"})
+			return
+		}
 
 		var target *registry.ServerInfo
 
@@ -160,7 +163,9 @@ func main() {
 				"player_ip": req.PlayerIP,
 				"backend":   backend,
 			})
-			http.Post(config.PeelURL+"/routes", "application/json", bytes.NewReader(routeBody))
+			if resp, err := http.Post(config.PeelURL+"/routes", "application/json", bytes.NewReader(routeBody)); err == nil {
+				resp.Body.Close()
+			}
 		}
 
 		c.JSON(200, gin.H{
