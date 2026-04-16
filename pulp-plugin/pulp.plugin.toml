@@ -1,0 +1,16 @@
+name = "bananasplit"
+version = "0.1.0"
+wasm = "bananasplit.wasm"
+
+capabilities = [
+    "transport.http.inbound",
+    "transport.http.outbound",
+]
+
+[config]
+bananagine_url = "http://localhost:3000"
+peel_url = ""
+relay_host = "hycraft.net"
+relay_port = 5520
+tick_rate_ms = 500
+queue_timeout_sec = 300
