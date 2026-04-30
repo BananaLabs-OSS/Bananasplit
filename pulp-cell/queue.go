@@ -8,7 +8,7 @@ import (
 
 // QueueManager owns one FIFO queue per mode. Cleanup of expired
 // entries is driven from the matcher tick (no background goroutine
-// needed — plugin runtime is step-based, not concurrent).
+// needed — cell runtime is step-based, not concurrent).
 type QueueManager struct {
 	mu      sync.Mutex
 	queues  map[string][]QueueEntry
@@ -23,10 +23,16 @@ func NewQueueManager(timeout time.Duration) *QueueManager {
 }
 
 // Join appends an entry to the named mode's queue.
+//
+// Native uses time.Now() (local zone) for JoinedAt. The field is
+// never serialized back out of the service — the matcher reads it
+// only via now.Sub(joinedAt) to compute wait duration — so UTC vs
+// local has no observable effect. Match native exactly anyway so a
+// parity test that snapshots in-memory state does not diff.
 func (m *QueueManager) Join(mode string, entry QueueEntry) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	entry.JoinedAt = time.Now().UTC()
+	entry.JoinedAt = time.Now()
 	m.queues[mode] = append(m.queues[mode], entry)
 }
 
@@ -84,16 +90,16 @@ func (m *QueueManager) Cleanup() {
 	if m.timeout <= 0 {
 		return
 	}
-	now := time.Now().UTC()
+	now := time.Now()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for mode, entries := range m.queues {
-		kept := entries[:0]
+		kept := make([]QueueEntry, 0, len(entries))
 		for _, e := range entries {
 			if now.Sub(e.JoinedAt) < m.timeout {
 				kept = append(kept, e)
 			} else {
-				fmt.Printf("[bananasplit] queue timeout: %s removed from %s\n", e.UUID, mode)
+				fmt.Printf("[Queue] Timeout: %s removed from %s (waited %s)\n", e.UUID, mode, now.Sub(e.JoinedAt))
 			}
 		}
 		m.queues[mode] = kept

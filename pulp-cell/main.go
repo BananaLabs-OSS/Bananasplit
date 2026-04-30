@@ -1,4 +1,4 @@
-// Bananasplit — Pulp plugin port.
+// Bananasplit — Pulp cell port.
 //
 // Matchmaking + player routing service. In-memory queues, player
 // registry, and referral queue; outbound HTTP to Bananagine (server
@@ -67,7 +67,7 @@ func bootstrap(configBytes []byte) error {
 			Method: "GET",
 			URL:    cfg.BananagineURL + "/registry/servers?type=lobby",
 		})
-		if err != nil || resp.Status != 200 {
+		if err != nil {
 			c.JSON(http.StatusInternalServerError, pulpgin.H{"error": "failed to query registry"})
 			return
 		}
@@ -91,6 +91,9 @@ func bootstrap(configBytes []byte) error {
 
 		backend := fmt.Sprintf("%s:%d", target.Host, target.Port)
 		registry.Register(req.PlayerIP, req.PlayerIP, target.ID)
+		// Native /route-request fires the Peel SetRoute and ignores the
+		// outcome — preserve that behavior here. PeelClient no-ops when
+		// the URL is empty, so the conditional is implicit.
 		_ = peel.SetRoute(req.PlayerIP, backend)
 
 		c.JSON(http.StatusOK, pulpgin.H{"backend": backend, "server_id": target.ID})
@@ -148,19 +151,25 @@ func bootstrap(configBytes []byte) error {
 		lobby, hasLobby := matcher.FindLobby()
 		for _, player := range req.Players {
 			if player.Action == "requeue" {
-				fmt.Printf("[bananasplit] player %s wants requeue (not implemented)\n", player.UUID)
+				fmt.Printf("[Bananasplit] Player %s wants requeue (not implemented)\n", player.UUID)
 				continue
 			}
 			if !hasLobby {
 				continue
 			}
+			// Native cmd/server/main.go:249 prints the "returning to
+			// lobby" line unconditionally once a lobby is known — before
+			// checking the player registry. Preserve that ordering so
+			// log output matches byte-for-byte on players who are not in
+			// the registry.
+			fmt.Printf("[Bananasplit] Player %s returning to lobby %s\n", player.UUID, lobby.ID)
 			playerInfo, ok := registry.GetByUUID(player.UUID)
 			if !ok {
 				continue
 			}
 			backend := fmt.Sprintf("%s:%d", lobby.Host, lobby.Port)
 			if err := peel.SetRoute(playerInfo.IP, backend); err != nil {
-				fmt.Printf("[bananasplit] set route for %s: %v\n", player.UUID, err)
+				fmt.Printf("[Bananasplit] Failed to set route for %s: %v\n", player.UUID, err)
 			}
 			referrals.Add(req.ServerID, Referral{
 				PlayerUUID: player.UUID,
@@ -198,6 +207,7 @@ func bootstrap(configBytes []byte) error {
 			return
 		}
 		registry.Register(req.PlayerUUID, req.PlayerIP, req.ServerID)
+		fmt.Printf("[Players] Registered %s on %s\n", req.PlayerUUID, req.ServerID)
 		c.JSON(http.StatusOK, pulpgin.H{"status": "ok"})
 	})
 
@@ -207,6 +217,7 @@ func bootstrap(configBytes []byte) error {
 			_ = peel.DeleteRoute(p.IP)
 		}
 		registry.Remove(uuid)
+		fmt.Printf("[Players] Removed %s\n", uuid)
 		c.JSON(http.StatusOK, pulpgin.H{"status": "ok"})
 	})
 
@@ -233,8 +244,20 @@ func bootstrap(configBytes []byte) error {
 		return r.Dispatch(ev)
 	})
 
-	fmt.Printf("[bananasplit] ready — bananagine=%s peel=%s tick=%s timeout=%s\n",
-		cfg.BananagineURL, cfg.PeelURL, cfg.TickRate, cfg.QueueTimeout)
+	fmt.Printf("Bananagine: %s\n", cfg.BananagineURL)
+	fmt.Printf("Relay: %s:%d\n", cfg.RelayHost, cfg.RelayPort)
+	fmt.Printf("Tick rate: %s\n", cfg.TickRate)
+	if cfg.QueueTimeout > 0 {
+		fmt.Printf("Queue timeout: %s\n", cfg.QueueTimeout)
+	} else {
+		fmt.Println("Queue timeout: disabled")
+	}
+	if cfg.PeelURL != "" {
+		fmt.Printf("Peel: %s\n", cfg.PeelURL)
+	} else {
+		fmt.Println("Peel: disabled")
+	}
+	fmt.Println("Matcher started")
 
 	return nil
 }
@@ -287,6 +310,20 @@ func parseConfig(data []byte) (config, error) {
 		tick = 500
 	}
 	cfg.TickRate = time.Duration(tick) * time.Millisecond
-	cfg.QueueTimeout = time.Duration(tmp.QueueTimeoutSec) * time.Second
+	// Native cmd/server/main.go:58 defaults queue timeout to 300s when
+	// the flag/env/default chain resolves to 0. Mirror that: a config
+	// value of 0 (or missing) means "use the 300s default", not
+	// "disabled". Callers who genuinely want timeouts disabled must set
+	// a negative value, which ResolveInt preserves on the native side
+	// and which parseConfig now also preserves.
+	qts := tmp.QueueTimeoutSec
+	if qts == 0 {
+		qts = 300
+	}
+	if qts < 0 {
+		cfg.QueueTimeout = 0
+	} else {
+		cfg.QueueTimeout = time.Duration(qts) * time.Second
+	}
 	return cfg, nil
 }

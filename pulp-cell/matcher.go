@@ -16,9 +16,15 @@ type MatcherConfig struct {
 	RelayPort   int
 }
 
+// matcherFetchTimeout matches native matcher.New's &http.Client{Timeout: 5 * time.Second}.
+// Every outbound call from the matcher — registry reads, expect/match status updates,
+// lobby webhook fan-out — runs under this budget so a slow or dead peer doesn't stall
+// the tick and back up the queue behind it.
+const matcherFetchTimeout = 5 * time.Second
+
 // Matcher pairs queued players with ready matches and hands them off
 // to the relevant game and lobby servers. Tick is driven from the
-// plugin step loop — no background goroutine (WASM plugins cannot
+// cell step loop — no background goroutine (WASM cells cannot
 // spawn independently-scheduled goroutines).
 type Matcher struct {
 	config    MatcherConfig
@@ -43,18 +49,27 @@ func NewMatcher(cfg MatcherConfig, q *QueueManager, p *PlayerRegistry, r *Referr
 
 // TickIfDue runs one matching cycle if the configured interval has
 // elapsed since the last tick. Queue timeout cleanup runs every 30
-// seconds regardless. Called from the plugin's OnStep handler with
+// seconds regardless. Called from the cell's OnStep handler with
 // the envelope's wall time.
+//
+// Native Bananasplit uses time.NewTicker, which fires for the first
+// time AFTER the interval — not immediately. Mirror that here: on the
+// very first step the wall-time baseline is recorded and no work runs.
+// Subsequent steps run the work only once the interval has elapsed.
 func (m *Matcher) TickIfDue(wallNanos uint64) {
 	tickNanos := uint64(m.config.TickRate)
-	if m.lastTick == 0 || wallNanos-m.lastTick >= tickNanos {
+	if m.lastTick == 0 {
+		m.lastTick = wallNanos
+	} else if wallNanos-m.lastTick >= tickNanos {
 		m.lastTick = wallNanos
 		for _, mode := range m.queues.Modes() {
 			m.tryMatch(mode)
 		}
 	}
 	const cleanupNanos = 30 * uint64(time.Second)
-	if m.lastCleanup == 0 || wallNanos-m.lastCleanup >= cleanupNanos {
+	if m.lastCleanup == 0 {
+		m.lastCleanup = wallNanos
+	} else if wallNanos-m.lastCleanup >= cleanupNanos {
 		m.lastCleanup = wallNanos
 		m.queues.Cleanup()
 	}
@@ -75,7 +90,7 @@ func (m *Matcher) tryMatch(mode string) {
 		return
 	}
 
-	fmt.Printf("[bananasplit] matched %d players for %s on %s/%s\n", len(players), mode, server.ID, matchID)
+	fmt.Printf("[Matcher] Matched %d players for %s on %s/%s\n", len(players), mode, server.ID, matchID)
 
 	uuids := make([]string, len(players))
 	for i, p := range players {
@@ -89,8 +104,9 @@ func (m *Matcher) tryMatch(mode string) {
 
 func (m *Matcher) findReadyMatch(mode string) (ServerInfo, string, bool) {
 	url := fmt.Sprintf("%s/registry/servers?type=game&mode=%s&hasReadyMatch=true", m.config.RegistryURL, mode)
-	resp, err := pulp.HTTP.Fetch(pulp.HTTPFetchRequest{Method: "GET", URL: url})
-	if err != nil || resp.Status != 200 {
+	resp, err := pulp.HTTP.Fetch(pulp.HTTPFetchRequest{Method: "GET", URL: url, Timeout: matcherFetchTimeout})
+	if err != nil {
+		fmt.Printf("[Matcher] Registry error: %v\n", err)
 		return ServerInfo{}, "", false
 	}
 	var servers []ServerInfo
@@ -112,8 +128,8 @@ func (m *Matcher) findReadyMatch(mode string) (ServerInfo, string, bool) {
 // that need a lobby directly (e.g. /route-request, /assign).
 func (m *Matcher) FindLobby() (ServerInfo, bool) {
 	url := fmt.Sprintf("%s/registry/servers?type=lobby&hasCapacity=true", m.config.RegistryURL)
-	resp, err := pulp.HTTP.Fetch(pulp.HTTPFetchRequest{Method: "GET", URL: url})
-	if err != nil || resp.Status != 200 {
+	resp, err := pulp.HTTP.Fetch(pulp.HTTPFetchRequest{Method: "GET", URL: url, Timeout: matcherFetchTimeout})
+	if err != nil {
 		return ServerInfo{}, false
 	}
 	var servers []ServerInfo
@@ -134,13 +150,14 @@ func (m *Matcher) sendExpect(server ServerInfo, matchID string, uuids []string) 
 		URL:     url,
 		Headers: map[string]string{"Content-Type": "application/json"},
 		Body:    body,
+		Timeout: matcherFetchTimeout,
 	})
 	if err != nil {
-		fmt.Printf("[bananasplit] send expect to %s: %v\n", server.ID, err)
+		fmt.Printf("[Matcher] Failed to send expect to %s: %v\n", server.ID, err)
 		return
 	}
 	_ = resp
-	fmt.Printf("[bananasplit] sent expect to %s for match %s\n", server.ID, matchID)
+	fmt.Printf("[Matcher] Sent expect to %s for match %s\n", server.ID, matchID)
 }
 
 func (m *Matcher) updateMatchStatus(serverID, matchID string, status MatchStatus, players []string) {
@@ -151,8 +168,9 @@ func (m *Matcher) updateMatchStatus(serverID, matchID string, status MatchStatus
 		URL:     url,
 		Headers: map[string]string{"Content-Type": "application/json"},
 		Body:    body,
+		Timeout: matcherFetchTimeout,
 	}); err != nil {
-		fmt.Printf("[bananasplit] update match status: %v\n", err)
+		fmt.Printf("[Matcher] Failed to update match status: %v\n", err)
 	}
 }
 
@@ -166,14 +184,14 @@ func (m *Matcher) notifyLobbies(players []QueueEntry, server ServerInfo, matchID
 
 	for lobbyID, uuids := range lobbies {
 		lobbyURL := fmt.Sprintf("%s/registry/servers/%s", m.config.RegistryURL, lobbyID)
-		resp, err := pulp.HTTP.Fetch(pulp.HTTPFetchRequest{Method: "GET", URL: lobbyURL})
-		if err != nil || resp.Status != 200 {
-			fmt.Printf("[bananasplit] get lobby %s: %v\n", lobbyID, err)
+		resp, err := pulp.HTTP.Fetch(pulp.HTTPFetchRequest{Method: "GET", URL: lobbyURL, Timeout: matcherFetchTimeout})
+		if err != nil {
+			fmt.Printf("[Matcher] Failed to get lobby %s: %v\n", lobbyID, err)
 			continue
 		}
 		var lobby ServerInfo
 		if err := json.Unmarshal(resp.Body, &lobby); err != nil {
-			fmt.Printf("[bananasplit] decode lobby %s: %v\n", lobbyID, err)
+			fmt.Printf("[Matcher] Failed to decode lobby %s: %v\n", lobbyID, err)
 			continue
 		}
 
@@ -190,10 +208,11 @@ func (m *Matcher) notifyLobbies(players []QueueEntry, server ServerInfo, matchID
 			URL:     webhookURL,
 			Headers: map[string]string{"Content-Type": "application/json"},
 			Body:    body,
+			Timeout: matcherFetchTimeout,
 		}); err != nil {
-			fmt.Printf("[bananasplit] notify lobby %s: %v\n", lobbyID, err)
+			fmt.Printf("[Matcher] Failed to notify lobby %s: %v\n", lobbyID, err)
 			continue
 		}
-		fmt.Printf("[bananasplit] notified lobby %s — %d players → %s\n", lobbyID, len(uuids), backend)
+		fmt.Printf("[Matcher] Notified lobby %s to transfer %d players to %s\n", lobbyID, len(uuids), backend)
 	}
 }

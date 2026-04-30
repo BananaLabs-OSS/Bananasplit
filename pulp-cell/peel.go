@@ -3,12 +3,18 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/BananaLabs-OSS/Fiber/pulp"
 )
 
+// peelFetchTimeout matches potassium/relay.NewClient's &http.Client{Timeout: 5 * time.Second}.
+// Peel SetRoute/DeleteRoute run inline from /route-request and /players handlers; a slow
+// Peel must not stall the HTTP handler past the matcher's budget.
+const peelFetchTimeout = 5 * time.Second
+
 // PeelClient talks to a Peel relay service over HTTP. All requests
-// route through pulp.HTTP.Fetch — the plugin never touches net/http.
+// route through pulp.HTTP.Fetch — the cell never touches net/http.
 type PeelClient struct {
 	baseURL string
 }
@@ -35,6 +41,7 @@ func (c *PeelClient) SetRoute(playerIP, backend string) error {
 		URL:     c.baseURL + "/routes",
 		Headers: map[string]string{"Content-Type": "application/json"},
 		Body:    body,
+		Timeout: peelFetchTimeout,
 	})
 	if err != nil {
 		return fmt.Errorf("peel set route: %w", err)
@@ -50,8 +57,9 @@ func (c *PeelClient) DeleteRoute(playerIP string) error {
 		return nil
 	}
 	resp, err := pulp.HTTP.Fetch(pulp.HTTPFetchRequest{
-		Method: "DELETE",
-		URL:    c.baseURL + "/routes/" + playerIP,
+		Method:  "DELETE",
+		URL:     c.baseURL + "/routes/" + playerIP,
+		Timeout: peelFetchTimeout,
 	})
 	if err != nil {
 		return fmt.Errorf("peel delete route: %w", err)

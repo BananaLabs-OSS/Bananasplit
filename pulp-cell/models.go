@@ -32,7 +32,11 @@ type ServerInfo struct {
 
 	Matches map[string]MatchInfo `json:"matches"`
 
-	Metadata map[string]string `json:"metadata,omitempty"`
+	// Metadata carries no JSON struct tag in the native
+	// registry.ServerInfo, so it serializes under the Go field name
+	// "Metadata" (capital M). Mirror that here; Bananasplit itself never
+	// reads Metadata but the shape must round-trip identically.
+	Metadata map[string]string
 }
 
 type MatchInfo struct {

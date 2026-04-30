@@ -1,4 +1,4 @@
-module bananasplit-plugin
+module bananasplit-cell
 
 go 1.25
 
