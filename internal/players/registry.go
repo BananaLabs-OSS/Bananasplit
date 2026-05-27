@@ -41,12 +41,15 @@ func (r *Registry) UpdateServer(uuid, serverID string) {
 	}
 }
 
-func (r *Registry) GetByUUID(uuid string) (*Player, bool) {
+func (r *Registry) GetByUUID(uuid string) (Player, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	player, ok := r.byUUID[uuid]
-	return player, ok
+	if !ok {
+		return Player{}, false
+	}
+	return *player, ok
 }
 
 func (r *Registry) GetByIP(ip string) (*Player, bool) {

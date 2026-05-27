@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/bananalabs-oss/bananasplit/internal/matcher"
@@ -13,9 +15,10 @@ import (
 	"github.com/bananalabs-oss/bananasplit/internal/queue"
 	"github.com/bananalabs-oss/bananasplit/internal/referrals"
 	"github.com/bananalabs-oss/potassium/config"
+	"github.com/bananalabs-oss/potassium/middleware"
 	"github.com/bananalabs-oss/potassium/registry"
-	"github.com/bananalabs-oss/potassium/server"
 	"github.com/bananalabs-oss/potassium/relay"
+	"github.com/bananalabs-oss/potassium/server"
 	"github.com/gin-gonic/gin"
 )
 
@@ -109,13 +112,21 @@ func main() {
 	fmt.Println("Matcher started")
 
 	// HTTP server
+	serviceToken := os.Getenv("SERVICE_TOKEN")
+	if serviceToken == "" {
+		log.Fatal("SERVICE_TOKEN is required")
+	}
+
 	r := gin.Default()
 
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
 
-	r.POST("/route-request", func(c *gin.Context) {
+	authed := r.Group("/")
+	authed.Use(middleware.ServiceAuth(serviceToken))
+
+	authed.POST("/route-request", func(c *gin.Context) {
 		var req struct {
 			PlayerIP string `json:"player_ip"`
 		}
@@ -175,7 +186,7 @@ func main() {
 	})
 
 	// Join queue
-	r.POST("/queue/join", func(c *gin.Context) {
+	authed.POST("/queue/join", func(c *gin.Context) {
 		var req struct {
 			UUID        string `json:"uuid"`
 			Mode        string `json:"mode"`
@@ -200,7 +211,7 @@ func main() {
 	})
 
 	// Leave queue
-	r.POST("/queue/leave", func(c *gin.Context) {
+	authed.POST("/queue/leave", func(c *gin.Context) {
 		var req struct {
 			UUID string `json:"uuid"`
 			Mode string `json:"mode"`
@@ -216,14 +227,14 @@ func main() {
 	})
 
 	// Queue size
-	r.GET("/queue/:mode/size", func(c *gin.Context) {
+	authed.GET("/queue/:mode/size", func(c *gin.Context) {
 		mode := c.Param("mode")
 		size := queues.Size(mode)
 		c.JSON(200, gin.H{"mode": mode, "size": size})
 	})
 
 	// Match complete (game server reports back)
-	r.POST("/match-complete", func(c *gin.Context) {
+	authed.POST("/match-complete", func(c *gin.Context) {
 		var req struct {
 			ServerID string `json:"serverId"`
 			MatchID  string `json:"matchId"`
@@ -270,7 +281,7 @@ func main() {
 	})
 
 	// Endpoint for "Peel Relay"
-	r.GET("/assign", func(c *gin.Context) {
+	authed.GET("/assign", func(c *gin.Context) {
 		ip := c.Query("ip")
 		if ip == "" {
 			c.JSON(400, gin.H{"error": "ip required"})
@@ -288,7 +299,7 @@ func main() {
 	})
 
 	// Endpoints for plugins
-	r.POST("/players/register", func(c *gin.Context) {
+	authed.POST("/players/register", func(c *gin.Context) {
 		var req struct {
 			PlayerUUID string `json:"player_uuid"`
 			PlayerIP   string `json:"player_ip"`
@@ -304,7 +315,7 @@ func main() {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
 
-	r.DELETE("/players/:uuid", func(c *gin.Context) {
+	authed.DELETE("/players/:uuid", func(c *gin.Context) {
 		uuid := c.Param("uuid")
 
 		player, found := playerRegistry.GetByUUID(uuid)
@@ -317,7 +328,7 @@ func main() {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
 
-	r.GET("/referrals", func(c *gin.Context) {
+	authed.GET("/referrals", func(c *gin.Context) {
 		serverID := c.Query("server")
 		if serverID == "" {
 			c.JSON(400, gin.H{"error": "server required"})
