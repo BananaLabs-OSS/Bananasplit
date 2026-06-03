@@ -28,6 +28,14 @@ func NewPeelClient(baseURL string) *PeelClient {
 // Enabled reports whether a Peel URL was configured.
 func (c *PeelClient) Enabled() bool { return c != nil && c.baseURL != "" }
 
+// SetRoute installs a player_ip -> backend mapping in Peel's route table.
+// backend is assembled from a registry-supplied Host:Port (see main.go
+// /route-request and matcher.go). That value is internal-trusted
+// (Bananagine-sourced) and is not dialed by this cell — it is forwarded
+// into Peel, which applies first-write backend validation on its side
+// (commit 80e9fe2). Egress/format validation is therefore deferred to
+// Peel rather than duplicated here; tighten here only if the registry
+// trust boundary weakens.
 func (c *PeelClient) SetRoute(playerIP, backend string) error {
 	if !c.Enabled() {
 		return nil

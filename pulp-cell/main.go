@@ -15,10 +15,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/BananaLabs-OSS/Fiber/pulp"
 	pulpgin "github.com/BananaLabs-OSS/Fiber/pulp/gin"
+	"github.com/BananaLabs-OSS/Fiber/pulp/gin/middleware"
 )
 
 func main() {}
@@ -54,7 +56,26 @@ func bootstrap(configBytes []byte) error {
 		c.JSON(http.StatusOK, pulpgin.H{"status": "ok"})
 	})
 
-	r.POST("/route-request", func(c *pulpgin.Context) {
+	// Auth posture: auth-available-not-mandatory. Every mutating /
+	// state-bearing endpoint rides a root group gated on X-Service-Token
+	// ONLY when SERVICE_TOKEN is configured (non-empty). When the token is
+	// empty (today's default) the routes are registered WITHOUT the auth
+	// middleware so existing callers — which send no X-Service-Token — keep
+	// working: no 401, no outage, the cell still starts. To ENABLE auth,
+	// set SERVICE_TOKEN here AND have the callers send the same value as the
+	// X-Service-Token header, in lockstep. The empty group prefix keeps the
+	// paths identical to native Bananasplit; only the auth middleware (when
+	// a token is configured) is interposed. /health stays open. Mirrors
+	// Peel's reconciled control-API posture (commit 80e9fe2) — deliberately
+	// NOT fail-closed.
+	var rg *pulpgin.RouterGroup
+	if cfg.ServiceToken != "" {
+		rg = r.Group("", middleware.ServiceAuth(cfg.ServiceToken))
+	} else {
+		rg = r.Group("")
+	}
+
+	rg.POST("/route-request", func(c *pulpgin.Context) {
 		var req struct {
 			PlayerIP string `json:"player_ip"`
 		}
@@ -99,7 +120,7 @@ func bootstrap(configBytes []byte) error {
 		c.JSON(http.StatusOK, pulpgin.H{"backend": backend, "server_id": target.ID})
 	})
 
-	r.POST("/queue/join", func(c *pulpgin.Context) {
+	rg.POST("/queue/join", func(c *pulpgin.Context) {
 		var req struct {
 			UUID        string `json:"uuid"`
 			Mode        string `json:"mode"`
@@ -117,7 +138,7 @@ func bootstrap(configBytes []byte) error {
 		})
 	})
 
-	r.POST("/queue/leave", func(c *pulpgin.Context) {
+	rg.POST("/queue/leave", func(c *pulpgin.Context) {
 		var req struct {
 			UUID string `json:"uuid"`
 			Mode string `json:"mode"`
@@ -129,12 +150,12 @@ func bootstrap(configBytes []byte) error {
 		c.JSON(http.StatusOK, pulpgin.H{"removed": queues.Leave(req.Mode, req.UUID)})
 	})
 
-	r.GET("/queue/:mode/size", func(c *pulpgin.Context) {
+	rg.GET("/queue/:mode/size", func(c *pulpgin.Context) {
 		mode := c.Param("mode")
 		c.JSON(http.StatusOK, pulpgin.H{"mode": mode, "size": queues.Size(mode)})
 	})
 
-	r.POST("/match-complete", func(c *pulpgin.Context) {
+	rg.POST("/match-complete", func(c *pulpgin.Context) {
 		var req struct {
 			ServerID string `json:"serverId"`
 			MatchID  string `json:"matchId"`
@@ -180,7 +201,7 @@ func bootstrap(configBytes []byte) error {
 		c.JSON(http.StatusOK, pulpgin.H{"status": "processed"})
 	})
 
-	r.GET("/assign", func(c *pulpgin.Context) {
+	rg.GET("/assign", func(c *pulpgin.Context) {
 		ip := c.Query("ip")
 		if ip == "" {
 			c.JSON(http.StatusBadRequest, pulpgin.H{"error": "ip required"})
@@ -196,7 +217,7 @@ func bootstrap(configBytes []byte) error {
 		})
 	})
 
-	r.POST("/players/register", func(c *pulpgin.Context) {
+	rg.POST("/players/register", func(c *pulpgin.Context) {
 		var req struct {
 			PlayerUUID string `json:"player_uuid"`
 			PlayerIP   string `json:"player_ip"`
@@ -211,7 +232,7 @@ func bootstrap(configBytes []byte) error {
 		c.JSON(http.StatusOK, pulpgin.H{"status": "ok"})
 	})
 
-	r.DELETE("/players/:uuid", func(c *pulpgin.Context) {
+	rg.DELETE("/players/:uuid", func(c *pulpgin.Context) {
 		uuid := c.Param("uuid")
 		if p, ok := registry.GetByUUID(uuid); ok {
 			_ = peel.DeleteRoute(p.IP)
@@ -221,7 +242,7 @@ func bootstrap(configBytes []byte) error {
 		c.JSON(http.StatusOK, pulpgin.H{"status": "ok"})
 	})
 
-	r.GET("/referrals", func(c *pulpgin.Context) {
+	rg.GET("/referrals", func(c *pulpgin.Context) {
 		serverID := c.Query("server")
 		if serverID == "" {
 			c.JSON(http.StatusBadRequest, pulpgin.H{"error": "server required"})
@@ -257,6 +278,11 @@ func bootstrap(configBytes []byte) error {
 	} else {
 		fmt.Println("Peel: disabled")
 	}
+	if cfg.ServiceToken != "" {
+		fmt.Println("Service auth ENABLED (X-Service-Token required on all routes except /health)")
+	} else {
+		fmt.Println("Service auth OFF (SERVICE_TOKEN empty); to enable, set SERVICE_TOKEN here AND have callers send X-Service-Token")
+	}
 	fmt.Println("Matcher started")
 
 	return nil
@@ -269,6 +295,7 @@ type config struct {
 	RelayPort     int
 	TickRate      time.Duration
 	QueueTimeout  time.Duration
+	ServiceToken  string
 }
 
 func parseConfig(data []byte) (config, error) {
@@ -288,6 +315,7 @@ func parseConfig(data []byte) (config, error) {
 		RelayPort       int    `json:"relay_port"`
 		TickRateMs      int    `json:"tick_rate_ms"`
 		QueueTimeoutSec int    `json:"queue_timeout_sec"`
+		ServiceToken    string `json:"service_token"`
 	}
 	if err := json.Unmarshal(jbytes, &tmp); err != nil {
 		return cfg, fmt.Errorf("decode config: %w", err)
@@ -324,6 +352,15 @@ func parseConfig(data []byte) (config, error) {
 		cfg.QueueTimeout = 0
 	} else {
 		cfg.QueueTimeout = time.Duration(qts) * time.Second
+	}
+	// SERVICE_TOKEN env (set by the Pulp host) wins over the manifest so
+	// the secret stays out of the committed pulp.cell.toml. Auth is gated
+	// on this token ONLY when non-empty; an empty token leaves all routes
+	// unauthenticated (no outage) and the cell still starts. See bootstrap
+	// for the auth posture.
+	cfg.ServiceToken = tmp.ServiceToken
+	if st := os.Getenv("SERVICE_TOKEN"); st != "" {
+		cfg.ServiceToken = st
 	}
 	return cfg, nil
 }

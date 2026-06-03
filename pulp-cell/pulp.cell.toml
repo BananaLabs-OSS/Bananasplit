@@ -14,3 +14,16 @@ relay_host = "hycraft.net"
 relay_port = 5520
 tick_rate_ms = 500
 queue_timeout_sec = 300
+
+# Shared secret gating all routes except /health (the queue, player
+# registry, route-request, match-complete and referral endpoints). Auth is
+# OFF unless this is set: when empty (the default) the cell starts and
+# serves every route WITHOUT auth (no outage) so existing callers, which
+# send no X-Service-Token, keep working. To ENABLE auth, set a non-empty
+# token HERE *and* have the callers (game/lobby plugins, relay) send the
+# same value as the X-Service-Token header, in lockstep. Setting only one
+# side either breaks callers (token here, callers silent → 401) or does
+# nothing (callers send a token the cell ignores). Prefer the SERVICE_TOKEN
+# env var so the secret stays out of committed config; the env var
+# overrides this value.
+service_token = ""

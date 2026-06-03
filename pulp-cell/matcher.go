@@ -3,10 +3,39 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net"
+	"strings"
 	"time"
 
 	"github.com/BananaLabs-OSS/Fiber/pulp"
 )
+
+// safeWebhookTarget validates a registry-supplied host:port before the
+// matcher dials it for an outbound webhook (sendExpect, notifyLobbies).
+// The host data originates from the trusted Bananagine registry rather
+// than raw end-user input, so this is a confused-deputy guard, not a full
+// untrusted-input SSRF filter: it rejects an empty host, a non-positive /
+// out-of-range port, and any literal-IP host that is loopback,
+// link-local, or in the cloud metadata range (169.254.0.0/16) so a
+// poisoned or self-registered registry entry cannot make the cell POST
+// attacker-chosen JSON to those internal targets. DNS names are allowed
+// through (resolution happens host-side in pulp.HTTP.Fetch); tightening to
+// an explicit CIDR allow-list is the next step if the registry trust
+// boundary weakens.
+func safeWebhookTarget(host string, port int) error {
+	if strings.TrimSpace(host) == "" {
+		return fmt.Errorf("empty host")
+	}
+	if port <= 0 || port > 65535 {
+		return fmt.Errorf("invalid port %d", port)
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+			return fmt.Errorf("disallowed address %s", host)
+		}
+	}
+	return nil
+}
 
 // MatcherConfig holds the matcher's runtime parameters.
 type MatcherConfig struct {
@@ -143,6 +172,10 @@ func (m *Matcher) FindLobby() (ServerInfo, bool) {
 }
 
 func (m *Matcher) sendExpect(server ServerInfo, matchID string, uuids []string) {
+	if err := safeWebhookTarget(server.Host, server.WebhookPort); err != nil {
+		fmt.Printf("[Matcher] Refusing expect to %s: %v\n", server.ID, err)
+		return
+	}
 	url := fmt.Sprintf("http://%s:%d/expect", server.Host, server.WebhookPort)
 	body, _ := json.Marshal(ExpectRequest{MatchID: matchID, UUIDs: uuids})
 	resp, err := pulp.HTTP.Fetch(pulp.HTTPFetchRequest{
@@ -195,6 +228,10 @@ func (m *Matcher) notifyLobbies(players []QueueEntry, server ServerInfo, matchID
 			continue
 		}
 
+		if err := safeWebhookTarget(lobby.Host, lobby.WebhookPort); err != nil {
+			fmt.Printf("[Matcher] Refusing notify to lobby %s: %v\n", lobbyID, err)
+			continue
+		}
 		webhookURL := fmt.Sprintf("http://%s:%d/match", lobby.Host, lobby.WebhookPort)
 		payload := MatchReadyRequest{
 			MatchID:    matchID,
