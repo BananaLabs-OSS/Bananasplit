@@ -16,8 +16,9 @@ import (
 
 // Config holds matcher configuration
 type Config struct {
-	RegistryURL string // Bananagine registry URL
-	TickRate    time.Duration
+	RegistryURL   string // Bananagine registry URL
+	RegistryToken string // X-Service-Token for Bananagine API calls
+	TickRate      time.Duration
 
 	RelayHost string
 	RelayPort int
@@ -34,11 +35,11 @@ type Matcher struct {
 	peel      *relay.Client
 }
 
-// TransferRequest is sent to lobby servers
+// TransferRequest is sent to lobby servers to initiate a transfer
 type TransferRequest struct {
-	UUID    string                 `json:"uuid"`
-	Target  string                 `json:"target"` // host:port
-	Payload map[string]interface{} `json:"payload"`
+	UUID    string         `json:"uuid"`
+	Target  string         `json:"target"`
+	Payload map[string]any `json:"payload"`
 }
 
 // ExpectRequest is sent to game servers
@@ -53,6 +54,18 @@ type MatchReadyRequest struct {
 	Mode       string   `json:"mode"`
 	Players    []string `json:"players"`
 	GameServer string   `json:"gameServer"` // host:port of game server
+}
+
+// registryGet performs an authenticated GET against the Bananagine registry.
+func (m *Matcher) registryGet(url string) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	if m.config.RegistryToken != "" {
+		req.Header.Set("X-Service-Token", m.config.RegistryToken)
+	}
+	return m.client.Do(req)
 }
 
 // New creates a new matcher
@@ -122,8 +135,13 @@ func (m *Matcher) tryMatch(mode string) {
 		uuids[i] = p.UUID
 	}
 
-	// Tell game server to expect players
-	m.sendExpect(server, matchID, uuids)
+	// Tell game server to expect players; re-queue on failure.
+	if !m.sendExpect(server, matchID, uuids) {
+		for _, p := range players {
+			m.queues.Join(mode, p)
+		}
+		return
+	}
 
 	// Update match status to busy
 	m.updateMatchStatus(server.ID, matchID, registry.StatusBusy, uuids)
@@ -133,7 +151,7 @@ func (m *Matcher) tryMatch(mode string) {
 }
 
 // notifyLobbies tells lobby servers to transfer matched players
-func (m *Matcher) notifyLobbies(players []queue.QueueEntry, server registry.ServerInfo, matchID string, mode string) { // Group players by their lobby server
+func (m *Matcher) notifyLobbies(players []queue.QueueEntry, server registry.ServerInfo, matchID string, mode string) {
 	lobbies := make(map[string][]string)
 	for _, p := range players {
 		lobbies[p.LobbyServer] = append(lobbies[p.LobbyServer], p.UUID)
@@ -144,7 +162,7 @@ func (m *Matcher) notifyLobbies(players []queue.QueueEntry, server registry.Serv
 	for lobbyID, uuids := range lobbies {
 		// Get lobby info from registry
 		lobbyURL := fmt.Sprintf("%s/registry/servers/%s", m.config.RegistryURL, lobbyID)
-		resp, err := m.client.Get(lobbyURL)
+		resp, err := m.registryGet(lobbyURL)
 		if err != nil {
 			fmt.Printf("[Matcher] Failed to get lobby %s: %v\n", lobbyID, err)
 			continue
@@ -179,22 +197,11 @@ func (m *Matcher) notifyLobbies(players []queue.QueueEntry, server registry.Serv
 	}
 }
 
-// updatePeelRoute updates the Peel route for a player
-func (m *Matcher) updatePeelRoute(playerUUID string, backend string) {
-	player, found := m.players.GetByUUID(playerUUID)
-	if !found {
-		return
-	}
-	if m.peel != nil {
-		m.peel.SetRoute(player.IP, backend)
-	}
-}
-
 // findReadyMatch queries registry for a ready match
 func (m *Matcher) findReadyMatch(mode string) (registry.ServerInfo, string, bool) {
 	url := fmt.Sprintf("%s/registry/servers?type=game&mode=%s&hasReadyMatch=true", m.config.RegistryURL, mode)
 
-	resp, err := m.client.Get(url)
+	resp, err := m.registryGet(url)
 	if err != nil {
 		fmt.Printf("[Matcher] Registry error: %v\n", err)
 		return registry.ServerInfo{}, "", false
@@ -246,8 +253,8 @@ func (m *Matcher) queueReferral(playerUUID string, backend string) {
 	fmt.Printf("[Matcher] Queued referral: %s on %s → %s\n", playerUUID, player.ServerID, backend)
 }
 
-// sendExpect tells game server to expect players
-func (m *Matcher) sendExpect(server registry.ServerInfo, matchID string, uuids []string) {
+// sendExpect tells game server to expect players. Returns true on success.
+func (m *Matcher) sendExpect(server registry.ServerInfo, matchID string, uuids []string) bool {
 	url := fmt.Sprintf("http://%s:%d/expect", server.Host, server.WebhookPort)
 
 	req := ExpectRequest{
@@ -259,11 +266,17 @@ func (m *Matcher) sendExpect(server registry.ServerInfo, matchID string, uuids [
 	resp, err := m.client.Post(url, "application/json", bytes.NewReader(body))
 	if err != nil {
 		fmt.Printf("[Matcher] Failed to send expect to %s: %v\n", server.ID, err)
-		return
+		return false
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode >= 300 {
+		fmt.Printf("[Matcher] Expect rejected by %s: status %d\n", server.ID, resp.StatusCode)
+		return false
+	}
+
 	fmt.Printf("[Matcher] Sent expect to %s for match %s\n", server.ID, matchID)
+	return true
 }
 
 // updateMatchStatus updates match in registry
@@ -279,6 +292,9 @@ func (m *Matcher) updateMatchStatus(serverID string, matchID string, status regi
 	body, _ := json.Marshal(match)
 	req, _ := http.NewRequest(http.MethodPut, url, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	if m.config.RegistryToken != "" {
+		req.Header.Set("X-Service-Token", m.config.RegistryToken)
+	}
 
 	resp, err := m.client.Do(req)
 	if err != nil {
@@ -292,7 +308,7 @@ func (m *Matcher) updateMatchStatus(serverID string, matchID string, status regi
 func (m *Matcher) FindLobby() (registry.ServerInfo, bool) {
 	url := fmt.Sprintf("%s/registry/servers?type=lobby&hasCapacity=true", m.config.RegistryURL)
 
-	resp, err := m.client.Get(url)
+	resp, err := m.registryGet(url)
 	if err != nil {
 		return registry.ServerInfo{}, false
 	}

@@ -44,21 +44,23 @@ func main() {
 
 	// Resolve: CLI > Env > Default
 	config := struct {
-		PeelURL       string
-		BananagineURL string
-		RelayHost     string
-		RelayPort     int
-		ListenAddr    string
-		TickRate      time.Duration
-		QueueTimeout  time.Duration
+		PeelURL          string
+		BananagineURL    string
+		BananagineToken  string
+		RelayHost        string
+		RelayPort        int
+		ListenAddr       string
+		TickRate         time.Duration
+		QueueTimeout     time.Duration
 	}{
-		PeelURL:       config.Resolve(*peelURL, config.EnvOrDefault("PEEL_URL", ""), ""),
-		BananagineURL: config.Resolve(*bananagineURL, config.EnvOrDefault("BANANAGINE_URL", ""), "http://localhost:3000"),
-		RelayHost:     config.Resolve(*relayHost, config.EnvOrDefault("RELAY_HOST", ""), "hycraft.net"),
-		RelayPort:     config.ResolveInt(*relayPort, config.EnvOrDefaultInt("RELAY_PORT", 0), 5520),
-		ListenAddr:    config.Resolve(*listenAddr, config.EnvOrDefault("LISTEN_ADDR", ""), ":3001"),
-		TickRate:      time.Duration(config.ResolveInt(*tickRate, config.EnvOrDefaultInt("TICK_RATE", 0), 500)) * time.Millisecond,
-		QueueTimeout:  time.Duration(config.ResolveInt(*queueTimeout, config.EnvOrDefaultInt("QUEUE_TIMEOUT", 0), 300)) * time.Second,
+		PeelURL:          config.Resolve(*peelURL, config.EnvOrDefault("PEEL_URL", ""), ""),
+		BananagineURL:    config.Resolve(*bananagineURL, config.EnvOrDefault("BANANAGINE_URL", ""), "http://localhost:3000"),
+		BananagineToken:  config.EnvOrDefault("BANANAGINE_TOKEN", ""),
+		RelayHost:        config.Resolve(*relayHost, config.EnvOrDefault("RELAY_HOST", ""), "hycraft.net"),
+		RelayPort:        config.ResolveInt(*relayPort, config.EnvOrDefaultInt("RELAY_PORT", 0), 5520),
+		ListenAddr:       config.Resolve(*listenAddr, config.EnvOrDefault("LISTEN_ADDR", ""), ":3001"),
+		TickRate:         time.Duration(config.ResolveInt(*tickRate, config.EnvOrDefaultInt("TICK_RATE", 0), 500)) * time.Millisecond,
+		QueueTimeout:     time.Duration(config.ResolveInt(*queueTimeout, config.EnvOrDefaultInt("QUEUE_TIMEOUT", 0), 300)) * time.Second,
 	}
 
 	// Log config
@@ -96,10 +98,11 @@ func main() {
 	// Create matcher
 	m := matcher.New(
 		matcher.Config{
-			RegistryURL: config.BananagineURL,
-			TickRate:    config.TickRate,
-			RelayHost:   config.RelayHost,
-			RelayPort:   config.RelayPort,
+			RegistryURL:     config.BananagineURL,
+			RegistryToken:   config.BananagineToken,
+			TickRate:        config.TickRate,
+			RelayHost:       config.RelayHost,
+			RelayPort:       config.RelayPort,
 		},
 		queues,
 		playerRegistry,
@@ -136,7 +139,11 @@ func main() {
 		}
 
 		// Find lobby with capacity
-		resp, err := http.Get(config.BananagineURL + "/registry/servers?type=lobby")
+		lobbyReq, _ := http.NewRequest(http.MethodGet, config.BananagineURL+"/registry/servers?type=lobby", nil)
+		if config.BananagineToken != "" {
+			lobbyReq.Header.Set("X-Service-Token", config.BananagineToken)
+		}
+		resp, err := http.DefaultClient.Do(lobbyReq)
 		if err != nil {
 			c.JSON(500, gin.H{"error": "failed to query registry"})
 			return
