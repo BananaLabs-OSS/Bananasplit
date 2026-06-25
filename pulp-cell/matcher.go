@@ -39,10 +39,11 @@ func safeWebhookTarget(host string, port int) error {
 
 // MatcherConfig holds the matcher's runtime parameters.
 type MatcherConfig struct {
-	RegistryURL string
-	TickRate    time.Duration
-	RelayHost   string
-	RelayPort   int
+	RegistryURL   string
+	RegistryToken string // X-Service-Token for Bananagine API calls
+	TickRate      time.Duration
+	RelayHost     string
+	RelayPort     int
 }
 
 // matcherFetchTimeout matches native matcher.New's &http.Client{Timeout: 5 * time.Second}.
@@ -50,6 +51,17 @@ type MatcherConfig struct {
 // lobby webhook fan-out — runs under this budget so a slow or dead peer doesn't stall
 // the tick and back up the queue behind it.
 const matcherFetchTimeout = 5 * time.Second
+
+// registryFetch performs an authenticated GET against the Bananagine registry,
+// mirroring native internal/matcher.(*Matcher).registryGet which sets
+// X-Service-Token when RegistryToken is non-empty.
+func (m *Matcher) registryFetch(url string) (pulp.HTTPResponse, error) {
+	req := pulp.HTTPFetchRequest{Method: "GET", URL: url, Timeout: matcherFetchTimeout}
+	if m.config.RegistryToken != "" {
+		req.Headers = map[string]string{"X-Service-Token": m.config.RegistryToken}
+	}
+	return pulp.HTTP.Fetch(req)
+}
 
 // Matcher pairs queued players with ready matches and hands them off
 // to the relevant game and lobby servers. Tick is driven from the
@@ -126,14 +138,21 @@ func (m *Matcher) tryMatch(mode string) {
 		uuids[i] = p.UUID
 	}
 
-	m.sendExpect(server, matchID, uuids)
+	// Tell game server to expect players; re-queue on failure (mirrors native).
+	if !m.sendExpect(server, matchID, uuids) {
+		for _, p := range players {
+			m.queues.Join(mode, p)
+		}
+		return
+	}
+
 	m.updateMatchStatus(server.ID, matchID, StatusBusy, uuids)
 	m.notifyLobbies(players, server, matchID, mode)
 }
 
 func (m *Matcher) findReadyMatch(mode string) (ServerInfo, string, bool) {
 	url := fmt.Sprintf("%s/registry/servers?type=game&mode=%s&hasReadyMatch=true", m.config.RegistryURL, mode)
-	resp, err := pulp.HTTP.Fetch(pulp.HTTPFetchRequest{Method: "GET", URL: url, Timeout: matcherFetchTimeout})
+	resp, err := m.registryFetch(url)
 	if err != nil {
 		fmt.Printf("[Matcher] Registry error: %v\n", err)
 		return ServerInfo{}, "", false
@@ -157,7 +176,7 @@ func (m *Matcher) findReadyMatch(mode string) (ServerInfo, string, bool) {
 // that need a lobby directly (e.g. /route-request, /assign).
 func (m *Matcher) FindLobby() (ServerInfo, bool) {
 	url := fmt.Sprintf("%s/registry/servers?type=lobby&hasCapacity=true", m.config.RegistryURL)
-	resp, err := pulp.HTTP.Fetch(pulp.HTTPFetchRequest{Method: "GET", URL: url, Timeout: matcherFetchTimeout})
+	resp, err := m.registryFetch(url)
 	if err != nil {
 		return ServerInfo{}, false
 	}
@@ -171,10 +190,12 @@ func (m *Matcher) FindLobby() (ServerInfo, bool) {
 	return servers[0], true
 }
 
-func (m *Matcher) sendExpect(server ServerInfo, matchID string, uuids []string) {
+// sendExpect tells the game server to expect players. Returns true on success,
+// false on any error or rejection — mirrors native internal/matcher.sendExpect.
+func (m *Matcher) sendExpect(server ServerInfo, matchID string, uuids []string) bool {
 	if err := safeWebhookTarget(server.Host, server.WebhookPort); err != nil {
 		fmt.Printf("[Matcher] Refusing expect to %s: %v\n", server.ID, err)
-		return
+		return false
 	}
 	url := fmt.Sprintf("http://%s:%d/expect", server.Host, server.WebhookPort)
 	body, _ := json.Marshal(ExpectRequest{MatchID: matchID, UUIDs: uuids})
@@ -187,19 +208,27 @@ func (m *Matcher) sendExpect(server ServerInfo, matchID string, uuids []string) 
 	})
 	if err != nil {
 		fmt.Printf("[Matcher] Failed to send expect to %s: %v\n", server.ID, err)
-		return
+		return false
 	}
-	_ = resp
+	if resp.Status >= 300 {
+		fmt.Printf("[Matcher] Expect rejected by %s: status %d\n", server.ID, resp.Status)
+		return false
+	}
 	fmt.Printf("[Matcher] Sent expect to %s for match %s\n", server.ID, matchID)
+	return true
 }
 
 func (m *Matcher) updateMatchStatus(serverID, matchID string, status MatchStatus, players []string) {
 	url := fmt.Sprintf("%s/registry/servers/%s/matches/%s", m.config.RegistryURL, serverID, matchID)
 	body, _ := json.Marshal(MatchInfo{Status: status, Need: len(players), Players: players})
+	headers := map[string]string{"Content-Type": "application/json"}
+	if m.config.RegistryToken != "" {
+		headers["X-Service-Token"] = m.config.RegistryToken
+	}
 	if _, err := pulp.HTTP.Fetch(pulp.HTTPFetchRequest{
 		Method:  "PUT",
 		URL:     url,
-		Headers: map[string]string{"Content-Type": "application/json"},
+		Headers: headers,
 		Body:    body,
 		Timeout: matcherFetchTimeout,
 	}); err != nil {
@@ -217,7 +246,7 @@ func (m *Matcher) notifyLobbies(players []QueueEntry, server ServerInfo, matchID
 
 	for lobbyID, uuids := range lobbies {
 		lobbyURL := fmt.Sprintf("%s/registry/servers/%s", m.config.RegistryURL, lobbyID)
-		resp, err := pulp.HTTP.Fetch(pulp.HTTPFetchRequest{Method: "GET", URL: lobbyURL, Timeout: matcherFetchTimeout})
+		resp, err := m.registryFetch(lobbyURL)
 		if err != nil {
 			fmt.Printf("[Matcher] Failed to get lobby %s: %v\n", lobbyID, err)
 			continue

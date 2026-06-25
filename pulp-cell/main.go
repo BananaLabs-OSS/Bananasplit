@@ -42,10 +42,11 @@ func bootstrap(configBytes []byte) error {
 
 	matcher := NewMatcher(
 		MatcherConfig{
-			RegistryURL: cfg.BananagineURL,
-			TickRate:    cfg.TickRate,
-			RelayHost:   cfg.RelayHost,
-			RelayPort:   cfg.RelayPort,
+			RegistryURL:   cfg.BananagineURL,
+			RegistryToken: cfg.BananagineToken,
+			TickRate:      cfg.TickRate,
+			RelayHost:     cfg.RelayHost,
+			RelayPort:     cfg.RelayPort,
 		},
 		queues, registry, referrals, peel,
 	)
@@ -84,10 +85,15 @@ func bootstrap(configBytes []byte) error {
 			return
 		}
 
-		resp, err := pulp.HTTP.Fetch(pulp.HTTPFetchRequest{
-			Method: "GET",
-			URL:    cfg.BananagineURL + "/registry/servers?type=lobby",
-		})
+		registryReq := pulp.HTTPFetchRequest{
+			Method:  "GET",
+			URL:     cfg.BananagineURL + "/registry/servers?type=lobby",
+			Timeout: 5 * time.Second,
+		}
+		if cfg.BananagineToken != "" {
+			registryReq.Headers = map[string]string{"X-Service-Token": cfg.BananagineToken}
+		}
+		resp, err := pulp.HTTP.Fetch(registryReq)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, pulpgin.H{"error": "failed to query registry"})
 			return
@@ -289,13 +295,14 @@ func bootstrap(configBytes []byte) error {
 }
 
 type config struct {
-	BananagineURL string
-	PeelURL       string
-	RelayHost     string
-	RelayPort     int
-	TickRate      time.Duration
-	QueueTimeout  time.Duration
-	ServiceToken  string
+	BananagineURL   string
+	BananagineToken string // X-Service-Token for Bananagine API calls
+	PeelURL         string
+	RelayHost       string
+	RelayPort       int
+	TickRate        time.Duration
+	QueueTimeout    time.Duration
+	ServiceToken    string
 }
 
 func parseConfig(data []byte) (config, error) {
@@ -310,6 +317,7 @@ func parseConfig(data []byte) (config, error) {
 	jbytes, _ := json.Marshal(raw)
 	var tmp struct {
 		BananagineURL   string `json:"bananagine_url"`
+		BananagineToken string `json:"bananagine_token"`
 		PeelURL         string `json:"peel_url"`
 		RelayHost       string `json:"relay_host"`
 		RelayPort       int    `json:"relay_port"`
@@ -321,6 +329,13 @@ func parseConfig(data []byte) (config, error) {
 		return cfg, fmt.Errorf("decode config: %w", err)
 	}
 	cfg.BananagineURL = tmp.BananagineURL
+	// BANANAGINE_TOKEN env wins over the manifest so the secret stays out
+	// of committed config (mirrors native cmd/server/main.go BananagineToken
+	// resolution via config.EnvOrDefault("BANANAGINE_TOKEN", "")).
+	cfg.BananagineToken = tmp.BananagineToken
+	if bt := os.Getenv("BANANAGINE_TOKEN"); bt != "" {
+		cfg.BananagineToken = bt
+	}
 	if cfg.BananagineURL == "" {
 		cfg.BananagineURL = "http://localhost:3000"
 	}
