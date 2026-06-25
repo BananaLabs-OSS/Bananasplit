@@ -9,6 +9,12 @@ capabilities = [
 
 [config]
 bananagine_url = "http://localhost:3000"
+# X-Service-Token sent to Bananagine on all registry calls (findReadyMatch,
+# FindLobby, updateMatchStatus). Prefer the BANANAGINE_TOKEN env var so the
+# secret stays out of committed config; the env var overrides this value.
+# Leave empty to send unauthenticated requests (safe when Bananagine's token
+# enforcement is off in the deployed environment).
+bananagine_token = ""
 peel_url = ""
 relay_host = "hycraft.net"
 relay_port = 5520
