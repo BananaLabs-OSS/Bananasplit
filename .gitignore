@@ -32,4 +32,6 @@ go.work.sum
 # .vscode/
 
 pulp-cell/*.wasm
+pulp-cell/bananasplit-cell
+pulp-cell/bananasplit-plugin
 pulp-cell/data/
