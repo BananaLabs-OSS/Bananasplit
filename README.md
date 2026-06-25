@@ -14,13 +14,58 @@ Bananasplit handles:
 - **Referrals**: Queues transfer instructions for game servers
 - **Peel Integration**: Updates routing when players move
 
+Two deployment targets:
+
+| Target | Directory | Use when |
+| ------ | --------- | -------- |
+| Pulp cell (canonical) | `pulp-cell/` | Running inside a Pulp host |
+| Native binary | `cmd/server/` + Dockerfile | Standalone / containerized |
+
 ## Quick Start
+
+**Pulp cell (canonical):**
+
+Build (requires `GOOS=wasip1 GOARCH=wasm`):
+
+```bash
+cd pulp-cell
+GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o bananasplit.wasm .
+```
+
+Run via the deployment helper (loads the cell into Pulp):
+
+```bash
+cd pulp-deployment
+go run . --cell ../pulp-cell/bananasplit.wasm
+```
+
+**Native binary:**
 
 ```bash
 go run ./cmd/server
 ```
 
 ## Configuration
+
+### Pulp cell
+
+Configuration lives in `pulp-cell/pulp.cell.toml` (checked in) and is overridden by env vars at runtime. Key fields:
+
+| Field (`pulp.cell.toml`) | Env var override | Default |
+| ------------------------ | ---------------- | ------- |
+| `bananagine_url` | — | `http://localhost:3000` |
+| `peel_url` | — | (disabled) |
+| `relay_host` | — | `hycraft.net` |
+| `relay_port` | — | `5520` |
+| `tick_rate_ms` | — | `500` |
+| `queue_timeout_sec` | — | `300` (set negative to disable) |
+| `service_token` | `SERVICE_TOKEN` | `""` (auth off when empty) |
+
+`SERVICE_TOKEN` env wins over the toml field so the secret stays out of committed config.
+
+When `service_token` / `SERVICE_TOKEN` is **empty**, all routes are served without auth (callers need no header). When set, `X-Service-Token: <value>` is required on all routes except `GET /health`. Both sides (cell + callers) must be updated in lockstep.
+
+### Native binary
 
 Configuration priority: CLI flags > Environment variables > Defaults
 
@@ -33,6 +78,8 @@ Configuration priority: CLI flags > Environment variables > Defaults
 | Relay port          | `RELAY_PORT`     | `-relay-port`    | `5520`                  |
 | Tick rate (ms)      | `TICK_RATE`      | `-tick`          | `500`                   |
 | Queue timeout (sec) | `QUEUE_TIMEOUT`  | `-queue-timeout` | `300`                   |
+
+`SERVICE_TOKEN` is **required** for the native binary; the process fatals on startup if it is unset.
 
 **CLI:**
 
@@ -51,6 +98,7 @@ bananasplit:
     - BANANAGINE_URL=http://bananagine:3000
     - PEEL_URL=http://peel:8080
     - QUEUE_TIMEOUT=300
+    - SERVICE_TOKEN=<secret>
 ```
 
 ## API Reference
@@ -92,7 +140,7 @@ bananasplit:
 }
 ```
 
-Actions: `lobby` (return to lobby), `requeue` (queue again)
+Actions: `lobby` (return to lobby). `requeue` is recognized but not yet implemented (logs a message, no-ops).
 
 ### Players
 
@@ -133,7 +181,7 @@ Game servers poll this endpoint to know which players to send to relay.
 
 ## Matcher
 
-Background process runs every 500ms:
+Runs every 500ms (configurable):
 
 1. For each queue, find servers with ready matches
 2. Assign players to matches
@@ -160,4 +208,3 @@ Matcher sends to each lobby's webhook port:
 ## License
 
 MIT
-
