@@ -1,0 +1,15 @@
+schema_version = 1
+name = "bananasplit"
+version = "0.1.0"
+
+cells = [
+    "../../pulp-engines/coordination-state-sqlite-cell/pulp.cell.toml",
+    "../../pulp-engines/http-json-cell/pulp.cell.toml",
+    "../api-cell/pulp.cell.toml",
+    "lua-orchestrator.cell.toml",
+]
+
+[orchestrator]
+manifest = "lua-orchestrator.cell.toml"
+script = "bananasplit.lua"
+sha256 = "bb76ff3a6d974e1c52b83453593a774fca251d5298f36c0fdbb97dc52fe6232d"

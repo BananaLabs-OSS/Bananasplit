@@ -1,0 +1,32 @@
+name = "lua-orchestrator"
+version = "0.1.0"
+wasm = "lua-orchestrator.wasm"
+
+provides = ["orchestrator.dispatch"]
+consumes = [
+    "coordination.v1.queue.join",
+    "coordination.v1.queue.leave",
+    "coordination.v1.queue.size",
+    "coordination.v1.queue.list",
+    "coordination.v1.queue.expire",
+    "coordination.v1.directory.put",
+    "coordination.v1.directory.get",
+    "coordination.v1.directory.remove",
+    "coordination.v1.mailbox.append",
+    "coordination.v1.mailbox.take",
+    "coordination.v1.schedule.due",
+    "coordination.v1.group.reserve",
+    "coordination.v1.group.commit",
+    "coordination.v1.group.release",
+    "engine.http-json.v1.request",
+]
+depends_on = ["coordination-state", "http-json"]
+capabilities = []
+
+[config]
+timeout_ms = 30000
+
+[config.values]
+bananagine_url = "http://localhost:3000"
+bananagine_token = ""
+peel_url = ""

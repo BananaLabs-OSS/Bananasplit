@@ -1,0 +1,16 @@
+name = "bananasplit-api"
+version = "0.1.0"
+wasm = "bananasplit-api.wasm"
+wasm_sha256 = "59e1d2a1de4610a7e07d48d222b38ba46ab04214b8a3a1305dc37c51e2bb585d"
+
+provides = []
+consumes = ["orchestrator.dispatch"]
+depends_on = ["lua-orchestrator"]
+capabilities = ["transport.http.inbound"]
+
+[config]
+relay_host = "hycraft.net"
+relay_port = 5520
+tick_rate_ms = 500
+queue_timeout_sec = 300
+service_token = ""

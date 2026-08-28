@@ -1,5 +1,13 @@
 # Bananasplit
 
+The canonical Pulp application is composed by `application/bananasplit.lua`.
+Lua owns matchmaking, lobby selection, route updates, and webhook policy. The
+shared `http-json` engine performs application-neutral outbound requests; no
+Bananasplit-specific effects engine is part of the composition.
+Durable queues, group reservations, record bindings, mailboxes, and schedule
+gates come from the shared `coordination-state` engine. BananaSplit maps its
+players, lobbies, referrals, and matches onto those neutral contracts in Lua.
+
 Matchmaking and player tracking service.
 
 From [BananaLabs OSS](https://github.com/bananalabs-oss).
@@ -18,25 +26,19 @@ Two deployment targets:
 
 | Target | Directory | Use when |
 | ------ | --------- | -------- |
-| Pulp cell (canonical) | `pulp-cell/` | Running inside a Pulp host |
+| Pulp application (canonical) | `application/` | Running inside a Pulp host |
 | Native binary | `cmd/server/` + Dockerfile | Standalone / containerized |
 
 ## Quick Start
 
-**Pulp cell (canonical):**
+**Pulp application (canonical):**
 
-Build (requires `GOOS=wasip1 GOARCH=wasm`):
-
-```bash
-cd pulp-cell
-GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o bananasplit.wasm .
-```
-
-Run via the deployment helper (loads the cell into Pulp):
+Build the generic `coordination-state` and `http-json` engines, the thin API
+adapter, and Pulp-Lua for WASI, then run the application manifest:
 
 ```bash
 cd pulp-deployment
-go run . --cell ../pulp-cell/bananasplit.wasm
+go run . -app ../application/pulp.app.toml
 ```
 
 **Native binary:**
@@ -47,9 +49,10 @@ go run ./cmd/server
 
 ## Configuration
 
-### Pulp cell
+### Pulp application
 
-Configuration lives in `pulp-cell/pulp.cell.toml` (checked in) and is overridden by env vars at runtime. Key fields:
+Application policy lives in `application/lua-orchestrator.cell.toml`; transport
+compatibility settings live in `api-cell/pulp.cell.toml`.
 
 | Field (`pulp.cell.toml`) | Env var override | Default |
 | ------------------------ | ---------------- | ------- |
