@@ -30,3 +30,7 @@ timeout_ms = 30000
 bananagine_url = "http://localhost:3000"
 bananagine_token = ""
 peel_url = ""
+peel_service_token = ""
+
+[config_env]
+"values.peel_service_token" = "PEEL_SERVICE_TOKEN"

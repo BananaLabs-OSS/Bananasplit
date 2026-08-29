@@ -58,6 +58,7 @@ compatibility settings live in `api-cell/pulp.cell.toml`.
 | ------------------------ | ---------------- | ------- |
 | `bananagine_url` | — | `http://localhost:3000` |
 | `peel_url` | — | (disabled) |
+| `peel_service_token` | `PEEL_SERVICE_TOKEN` | `""` (legacy PEEL auth off) |
 | `relay_host` | — | `hycraft.net` |
 | `relay_port` | — | `5520` |
 | `tick_rate_ms` | — | `500` |
@@ -65,6 +66,9 @@ compatibility settings live in `api-cell/pulp.cell.toml`.
 | `service_token` | `SERVICE_TOKEN` | `""` (auth off when empty) |
 
 `SERVICE_TOKEN` env wins over the toml field so the secret stays out of committed config.
+`PEEL_SERVICE_TOKEN` is separate: it authenticates Bananasplit's outbound
+route mutations to PEEL and must match PEEL's `SERVICE_TOKEN`. Pulp injects it
+only into the Lua orchestrator's nested configuration.
 
 When `service_token` / `SERVICE_TOKEN` is **empty**, all routes are served without auth (callers need no header). When set, `X-Service-Token: <value>` is required on all routes except `GET /health`. Both sides (cell + callers) must be updated in lockstep.
 
@@ -102,6 +106,7 @@ bananasplit:
     - PEEL_URL=http://peel:8080
     - QUEUE_TIMEOUT=300
     - SERVICE_TOKEN=<secret>
+    - PEEL_SERVICE_TOKEN=<same value as Peel SERVICE_TOKEN>
 ```
 
 ## API Reference

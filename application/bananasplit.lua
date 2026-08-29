@@ -22,6 +22,14 @@ local function registry_headers()
   return headers
 end
 
+local function peel_headers()
+  local headers = { ["Content-Type"] = "application/json" }
+  if pulp.config.peel_service_token ~= nil and pulp.config.peel_service_token ~= "" then
+    headers["X-Service-Token"] = pulp.config.peel_service_token
+  end
+  return headers
+end
+
 local function registry_get(path)
   local response = http("GET", pulp.config.bananagine_url .. path, nil, registry_headers())
   if response.status < 200 or response.status >= 300 then error("registry request failed") end
@@ -104,13 +112,13 @@ local function effect(provider, payload)
     if pulp.config.peel_url == nil or pulp.config.peel_url == "" then return { ok = true } end
     local response = http("POST", pulp.config.peel_url .. "/routes", {
       player_ip = payload.player_ip, backend = payload.backend,
-    })
+    }, peel_headers())
     if response.status < 200 or response.status >= 300 then error("route set failed") end
     return { ok = true }
   end
   if provider == "bananasplit.effects.v1.peel.route-delete" then
     if pulp.config.peel_url == nil or pulp.config.peel_url == "" then return { ok = true } end
-    local response = http("DELETE", pulp.config.peel_url .. "/routes/" .. payload.player_ip)
+    local response = http("DELETE", pulp.config.peel_url .. "/routes/" .. payload.player_ip, nil, peel_headers())
     if response.status ~= 200 and response.status ~= 204 then error("route delete failed") end
     return { ok = true }
   end
