@@ -3,7 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
+	"encoding/base32"
 	"encoding/hex"
 	"fmt"
 	"log"
@@ -276,7 +276,7 @@ func registerRoutes(engine *pulpgin.Engine, client *workflow.Client, cfg config)
 			c.JSON(500, pulpgin.H{"error": "join lease generation failed"})
 			return
 		}
-		token := base64.RawURLEncoding.EncodeToString(secret)
+		token := strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(secret))
 		digest := sha256.Sum256([]byte(token))
 		now := time.Now().Unix()
 		leaseID := commandID(c, "join-lease")
