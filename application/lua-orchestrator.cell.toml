@@ -34,5 +34,6 @@ peel_service_token = ""
 
 [config_env]
 "values.bananagine_url" = "BANANAGINE_URL"
+"values.bananagine_token" = "BANANAGINE_TOKEN"
 "values.peel_url" = "PEEL_URL"
 "values.peel_service_token" = "PEEL_SERVICE_TOKEN"
