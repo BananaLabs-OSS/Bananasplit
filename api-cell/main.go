@@ -1,6 +1,10 @@
 package main
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"net/http"
@@ -243,6 +247,86 @@ func registerRoutes(engine *pulpgin.Engine, client *workflow.Client, cfg config)
 		result, err := dispatch[map[string]any](client, "bananasplit.http.assign.v1", map[string]any{})
 		if err != nil {
 			c.JSON(500, pulpgin.H{"error": err.Error()})
+			return
+		}
+		respondMap(c, result)
+	})
+
+	routes.POST("/join-leases", func(c *pulpgin.Context) {
+		var request struct {
+			PrincipalID           string `json:"principal_id"`
+			DeviceID              string `json:"device_id"`
+			DestinationID         string `json:"destination_id"`
+			FallbackDestinationID string `json:"fallback_destination_id"`
+			TTLSeconds            int64  `json:"ttl_seconds"`
+		}
+		if err := c.ShouldBindJSON(&request); err != nil {
+			c.JSON(400, pulpgin.H{"error": "invalid join lease request"})
+			return
+		}
+		if request.PrincipalID == "" || request.DeviceID == "" || request.DestinationID == "" {
+			c.JSON(400, pulpgin.H{"error": "principal_id, device_id, and destination_id required"})
+			return
+		}
+		if request.TTLSeconds <= 0 || request.TTLSeconds > 300 {
+			request.TTLSeconds = 60
+		}
+		secret := make([]byte, 32)
+		if _, err := rand.Read(secret); err != nil {
+			c.JSON(500, pulpgin.H{"error": "join lease generation failed"})
+			return
+		}
+		token := base64.RawURLEncoding.EncodeToString(secret)
+		digest := sha256.Sum256([]byte(token))
+		now := time.Now().Unix()
+		leaseID := commandID(c, "join-lease")
+		result, err := dispatch[map[string]any](client, "bananasplit.http.join-lease.issue.v1", map[string]any{
+			"id": leaseID, "lease_id": leaseID,
+			"token_digest": hex.EncodeToString(digest[:]),
+			"principal_id": request.PrincipalID, "device_id": request.DeviceID,
+			"destination_id":          request.DestinationID,
+			"fallback_destination_id": request.FallbackDestinationID,
+			"expires_at":              now + request.TTLSeconds,
+		})
+		if err != nil {
+			c.JSON(500, pulpgin.H{"error": "join lease persistence failed"})
+			return
+		}
+		result["token"] = token
+		c.Header("Cache-Control", "no-store")
+		respondMap(c, result)
+	})
+
+	routes.POST("/connections/resolve", func(c *pulpgin.Context) {
+		var request struct {
+			ConnectionID   string `json:"connection_id"`
+			LeaseToken     string `json:"lease_token"`
+			Transport      string `json:"transport"`
+			SourceEndpoint string `json:"source_endpoint"`
+		}
+		if err := c.ShouldBindJSON(&request); err != nil || request.ConnectionID == "" || request.LeaseToken == "" {
+			c.JSON(400, pulpgin.H{"error": "connection_id and lease_token required"})
+			return
+		}
+		digest := sha256.Sum256([]byte(request.LeaseToken))
+		result, err := dispatch[map[string]any](client, "bananasplit.http.connection.resolve.v1", map[string]any{
+			"id": commandID(c, "connection-resolve"), "connection_id": request.ConnectionID,
+			"token_digest": hex.EncodeToString(digest[:]), "transport": request.Transport,
+			"source_endpoint": request.SourceEndpoint, "now": time.Now().Unix(),
+		})
+		if err != nil {
+			c.JSON(500, pulpgin.H{"error": "connection resolution failed"})
+			return
+		}
+		respondMap(c, result)
+	})
+
+	routes.GET("/connections/:id", func(c *pulpgin.Context) {
+		result, err := dispatch[map[string]any](client, "bananasplit.http.connection.get.v1", map[string]any{
+			"connection_id": c.Param("id"),
+		})
+		if err != nil {
+			c.JSON(500, pulpgin.H{"error": "connection lookup failed"})
 			return
 		}
 		respondMap(c, result)

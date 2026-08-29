@@ -65,6 +65,12 @@ local function effect(provider, payload)
     if #servers == 0 then return { found = false } end
     return { found = true, server = servers[1], backend = backend(servers[1]) }
   end
+  if provider == "bananasplit.effects.v1.server.find" then
+    local response = http("GET", pulp.config.bananagine_url .. "/registry/servers/" .. payload.server_id, nil, registry_headers())
+    if response.status == 404 then return { found = false } end
+    if response.status < 200 or response.status >= 300 or response.value == nil then error("registry request failed") end
+    return { found = true, server = response.value, backend = backend(response.value) }
+  end
   if provider == "bananasplit.effects.v1.match.find-ready" then
     for _, server in ipairs(registry_get("/registry/servers?type=game&mode=" .. payload.mode .. "&hasReadyMatch=true") or {}) do
       for match_id, match in pairs(server.matches or {}) do
@@ -182,6 +188,78 @@ function M.assign(_)
     return { http_status = 503, error = "no lobby available" }
   end
   return { backend = lobby.backend }
+end
+
+function M.join_lease_issue(payload)
+  owner("coordination.v1.directory.put", {
+    id = payload.id,
+    key = "join-lease:" .. payload.token_digest,
+    record = {
+      subject_id = payload.principal_id,
+      address = payload.device_id,
+      placement = payload.destination_id,
+      metadata = {
+        lease_id = payload.lease_id,
+        fallback_destination_id = payload.fallback_destination_id or "",
+        expires_at = tostring(payload.expires_at),
+      },
+    },
+  })
+  return { status = "issued", lease_id = payload.lease_id, expires_at = payload.expires_at }
+end
+
+function M.connection_resolve(payload)
+  local lease_key = "join-lease:" .. payload.token_digest
+  local stored = owner("coordination.v1.directory.get", { key = lease_key })
+  if stored.found ~= true or stored.record == nil then
+    return { http_status = 401, error = "invalid or consumed join lease" }
+  end
+  local expires_at = tonumber((stored.record.metadata or {}).expires_at or "0") or 0
+  if expires_at <= payload.now then
+    owner("coordination.v1.directory.remove", { id = payload.id .. ":expire", key = lease_key })
+    return { http_status = 401, error = "join lease expired" }
+  end
+  local destination = effect("bananasplit.effects.v1.server.find", { server_id = stored.record.placement })
+  local used_fallback = false
+  if destination.found ~= true then
+    local fallback_id = (stored.record.metadata or {}).fallback_destination_id or ""
+    if fallback_id ~= "" then
+      destination = effect("bananasplit.effects.v1.server.find", { server_id = fallback_id })
+      used_fallback = destination.found == true
+    end
+  end
+  if destination.found ~= true then
+    return { http_status = 503, error = "destination and fallback unavailable" }
+  end
+  owner("coordination.v1.directory.put", {
+    id = payload.id .. ":connection",
+    key = "connection:" .. payload.connection_id,
+    record = {
+      subject_id = stored.record.subject_id,
+      address = payload.source_endpoint,
+      placement = destination.server.id,
+      metadata = {
+        device_id = stored.record.address,
+        lease_id = (stored.record.metadata or {}).lease_id or "",
+        transport = payload.transport,
+        fallback = used_fallback and "true" or "false",
+      },
+    },
+  })
+  owner("coordination.v1.directory.remove", { id = payload.id .. ":consume", key = lease_key })
+  return {
+    backend = destination.backend,
+    server_id = destination.server.id,
+    principal_id = stored.record.subject_id,
+    device_id = stored.record.address,
+    used_fallback = used_fallback,
+  }
+end
+
+function M.connection_get(payload)
+  local stored = owner("coordination.v1.directory.get", { key = "connection:" .. payload.connection_id })
+  if stored.found ~= true then return { http_status = 404, error = "connection not found" } end
+  return { connection_id = payload.connection_id, binding = stored.record }
 end
 
 function M.player_register(payload)
@@ -328,6 +406,9 @@ local EVENTS = {
   ["bananasplit.http.queue.size.v1"] = M.queue_size,
   ["bananasplit.http.route-request.v1"] = M.route_request,
   ["bananasplit.http.assign.v1"] = M.assign,
+  ["bananasplit.http.join-lease.issue.v1"] = M.join_lease_issue,
+  ["bananasplit.http.connection.resolve.v1"] = M.connection_resolve,
+  ["bananasplit.http.connection.get.v1"] = M.connection_get,
   ["bananasplit.http.player.register.v1"] = M.player_register,
   ["bananasplit.http.player.remove.v1"] = M.player_remove,
   ["bananasplit.http.referrals.v1"] = M.referrals,

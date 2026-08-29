@@ -7,6 +7,8 @@ Bananasplit-specific effects engine is part of the composition.
 Durable queues, group reservations, record bindings, mailboxes, and schedule
 gates come from the shared `coordination-state` engine. BananaSplit maps its
 players, lobbies, referrals, and matches onto those neutral contracts in Lua.
+See [connection identity, global authorization, and fallback](docs/IDENTITY_ROUTING.md)
+for the connection-scoped replacement for legacy IP routing.
 
 Matchmaking and player tracking service.
 
@@ -166,6 +168,18 @@ Actions: `lobby` (return to lobby). `requeue` is recognized but not yet implemen
   "server_id": "lobby-1"
 }
 ```
+
+### Connection identity
+
+| Method | Endpoint | Description |
+| ------ | -------- | ----------- |
+| `POST` | `/join-leases` | Issue a one-use browser/device/destination capability |
+| `POST` | `/connections/resolve` | Consume a lease and bind an edge connection |
+| `GET` | `/connections/:id` | Inspect the durable connection binding |
+
+The raw lease token is returned once and is never stored. A requested
+destination may declare an authorized fallback. IP-based routing remains only
+for compatibility with callers that have not adopted connection IDs.
 
 ### Referrals
 
