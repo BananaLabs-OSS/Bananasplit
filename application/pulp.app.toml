@@ -12,4 +12,4 @@ cells = [
 [orchestrator]
 manifest = "lua-orchestrator.cell.toml"
 script = "bananasplit.lua"
-sha256 = "ea9a8cdde6e1fca75547a603aea53893cd39011edbe86224ee1b8f366e9cb70b"
+sha256 = "e9a023f5f60de9f0fc93f80a79b0615242ddfe1b929dbb721d67efe24f76f050"
