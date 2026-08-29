@@ -14,3 +14,6 @@ relay_port = 5520
 tick_rate_ms = 500
 queue_timeout_sec = 300
 service_token = ""
+
+[config_env]
+service_token = "SERVICE_TOKEN"

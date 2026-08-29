@@ -1,0 +1,50 @@
+# Build context: the parent Projects directory.
+FROM golang:1.25 AS source
+WORKDIR /src
+COPY Fiber/ Fiber/
+COPY Pulp-Lua/ Pulp-Lua/
+COPY Bananasplit/ Bananasplit/
+COPY pulp-engines/ pulp-engines/
+
+FROM source AS coordination
+WORKDIR /src/pulp-engines/coordination-state-sqlite-cell
+RUN GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o coordination-state.wasm .
+
+FROM source AS httpjson
+WORKDIR /src/pulp-engines/http-json-cell
+RUN GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o http-json.wasm .
+
+FROM source AS api
+WORKDIR /src/Bananasplit/api-cell
+RUN GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o bananasplit-api.wasm .
+
+FROM source AS lua
+WORKDIR /src/Pulp-Lua/pulp-cell
+RUN GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o lua-orchestrator.wasm .
+
+FROM golang:1.25 AS host
+WORKDIR /src
+COPY Pulp/ Pulp/
+COPY Pulp-ext-http/ Pulp-ext-http/
+COPY Pulp-ext-sqlite/ Pulp-ext-sqlite/
+COPY Bananasplit/pulp-deployment/ Bananasplit/pulp-deployment/
+WORKDIR /src/Bananasplit/pulp-deployment
+RUN CGO_ENABLED=0 go build -o /out/bananasplit-host .
+
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates
+WORKDIR /app
+COPY --from=host /out/bananasplit-host /app/bananasplit-host
+COPY Bananasplit/application/ /app/application/
+COPY Bananasplit/api-cell/pulp.cell.toml /app/api-cell/pulp.cell.toml
+COPY pulp-engines/coordination-state-sqlite-cell/pulp.cell.toml /pulp-engines/coordination-state-sqlite-cell/pulp.cell.toml
+COPY pulp-engines/http-json-cell/pulp.cell.toml /pulp-engines/http-json-cell/pulp.cell.toml
+COPY --from=coordination /src/pulp-engines/coordination-state-sqlite-cell/coordination-state.wasm /pulp-engines/coordination-state-sqlite-cell/coordination-state.wasm
+COPY --from=httpjson /src/pulp-engines/http-json-cell/http-json.wasm /pulp-engines/http-json-cell/http-json.wasm
+COPY --from=api /src/Bananasplit/api-cell/bananasplit-api.wasm /app/api-cell/bananasplit-api.wasm
+COPY --from=lua /src/Pulp-Lua/pulp-cell/lua-orchestrator.wasm /app/application/lua-orchestrator.wasm
+RUN chmod +x /app/bananasplit-host
+ENV HTTP_PORT=3001
+EXPOSE 3001
+HEALTHCHECK --interval=30s --timeout=5s CMD wget -qO- http://localhost:${HTTP_PORT}/health || exit 1
+CMD ["/app/bananasplit-host", "-app", "/app/application/pulp.app.toml"]
