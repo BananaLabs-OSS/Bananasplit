@@ -1,7 +1,7 @@
 name = "bananasplit-api"
 version = "0.1.0"
 wasm = "bananasplit-api.wasm"
-wasm_sha256 = "00ecde8c24286b69c524b07924f10fe6e1e41484f465984e308ab501e0057974"
+wasm_sha256 = "c12601b7904eb7ae66943fb83cae404795aa61382c9960fceaef4e9cc82b43c6"
 
 provides = []
 consumes = ["orchestrator.dispatch"]
